@@ -1,36 +1,50 @@
 # The Wall
 
-A small, bounded wall that fills one brick at a time, in the order people show
-up. Pick a colour, it lands in the next open spot — reading order, left to
-right, top to bottom. There's no free placement and no redo. Your own bricks
-are outlined when you look at the wall; no account, just a cookie.
+## What it is
 
-## What good means here (first pass)
+The Wall is a small shared wall where visitors add one brick at a time.
+A visitor chooses a colour and their brick is placed into the next available
+space.
 
-This is a first version, written before the app exists properly, and it's
-meant to be rough. It'll change as the project does.
+The wall is intentionally bounded and fills from left to right, then top to
+bottom. There is no account, chat, likes, or infinite scroll.
 
-- **Small and finite beats infinite.** The wall is one 20×12 grid, not an
-  endless canvas. It's done when it's full, the same way a real wall would be.
-- **Anonymous, but still yours.** No sign-up, no profile — just a quiet cookie
-  so you can find your own bricks again. Nobody else needs to know which ones
-  are yours.
-- **Legible at a glance.** A stranger should be able to look at the wall for
-  five seconds and understand the whole rule: one brick each, in order, no
-  take-backs.
+## What good means
 
-## What I read
+For this first version, I think a good version of The Wall should be:
 
-Still reading. The brief points at the small web, games built for a handful of
-friends, and tools built for one workshop — [Robin Sloan's "Home-Cooked
-App"](https://www.robinsloan.com/notes/home-cooked-app/) is the closest match
-to that and the first thing on the list, not yet a citation I can properly
-defend. The real argument, with sources actually weighed against each other,
-comes with the next rewrite of this file.
+### Easy to understand
 
-## What's enforced vs. judged
+A stranger should be able to understand what to do from the page itself,
+without needing an explanation from me.
 
-- **Enforced** (see `spec/`): a brick you place is still there, outlined as
-  yours, when you come back.
-- **Judged** (nobody's written a check for this yet): whether the order-only
-  rule actually reads as "a wall," and not just a worse guestbook.
+### Small and constrained
+
+The wall should feel like a small shared object rather than another social
+media feed. The fixed 20×12 grid and one-brick-per-visit rule give the
+interaction a clear boundary.
+
+### Persistent
+
+An action should have a consequence that remains after the page is refreshed
+or the visitor returns. A visitor should be able to recognise the bricks they
+placed without creating an account.
+
+### Shared but personal
+
+Different visitors should see the same wall, while each visitor can still
+recognise their own contribution.
+
+## What informed this
+
+I used the COMP4020 final-project brief and the Crit 8 brief as the main
+starting points. In particular, the discussion of the small web, games for a
+handful of friends, and tools built for one workshop influenced my decision
+to keep the project small and focused rather than building a general-purpose
+social application.
+
+I also looked at [Robin Sloan's "Home-Cooked App"](https://www.robinsloan.com/notes/home-cooked-app/)
+as an example of thinking about small, personal web projects.
+
+This is a first version of what I think makes the project good. I expect
+these criteria to change as the project develops.
