@@ -9,6 +9,11 @@ space.
 The wall is intentionally bounded and fills from left to right, then top to
 bottom. There is no account, chat, likes, or infinite scroll.
 
+Since crit 9, the wall updates live: a brick placed by one visitor appears for
+everyone else who has the page open, without a reload. How two visitors
+placing at once is resolved is written down in
+[`docs/adr/001-concurrent-brick-placement.md`](docs/adr/001-concurrent-brick-placement.md).
+
 ## What good means
 
 For this first version, I think a good version of The Wall should be:
