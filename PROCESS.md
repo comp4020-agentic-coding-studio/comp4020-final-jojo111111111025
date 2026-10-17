@@ -220,3 +220,107 @@ What's still outside what either the automated tests or this manual check
 cover: a true two-visitor race reaching the `PRIMARY KEY` constraint's reject
 branch on the live app — the ADR explains why that's not reachable through
 the HTTP layer on this one-process deployment, not merely untested.
+
+## Crit 10: fly by instruments
+
+### Direction
+
+I gave the agent the full crit 10 requirements up front (telling two visitors
+apart server-side, authorisation, logging, tests, docs) and told it explicitly
+to inspect the existing repository before changing anything, not to assume any
+file path or framework detail, not to discard existing work, and to report
+back honestly on what was already satisfied versus genuinely missing, rather
+than rebuilding anything that already worked.
+
+### Inspection, before anything changed
+
+The agent read `server.ts`, `CLAUDE.md`, `README.md`, both existing ADRs, all
+four spec files and `spec/README.md`, `PROCESS.md`, both reflections,
+`package.json`, `fly.toml`, the `Dockerfile`, and the CI workflow, then ran
+`pnpm check` against a locally-running instance to confirm the starting state
+was green (8/8 tests passing) before writing anything.
+
+That inspection found the real gap wasn't "no multi-user support" — the wall
+has been multi-user and live-updating since crit 8/9, and every brick already
+records its creator's `visitor_id`. The actual gap was narrower and more
+specific: the `visitor_id` cookie was **unsigned**. The server trusted
+whatever value arrived in that cookie outright, so a visitor could set
+`Cookie: visitor_id=<someone-else's-id>` — an id visible to them already,
+since it's broadcast in plain text on every SSE `brick` event — and be treated
+by the server as that visitor. Nothing before crit 10's spec actually required
+authorisation beyond "recognise your own bricks," so this had been a latent
+gap since crit 8, not a regression. The agent also noticed, while reading the
+`POST /brick` handler, that `color` is the one client-submitted value a
+placement carries, and it was being interpolated unescaped into an HTML
+`style` attribute — a real injection path, separate from the identity work but
+found during the same close reading.
+
+### What got built
+
+`server.ts`: the cookie's value changed from a bare `randomUUID()` to a signed
+pair, `<uuid>.<hmac-sha256-hex>`, verified with `timingSafeEqual` so a forged
+or guessed tag can't be distinguished from a correct one by timing. The
+signing key (`SESSION_SECRET`) is generated once with `randomBytes(32)` and
+persisted in a new `meta` table in the same SQLite file as `bricks`, so it
+survives restarts and redeploys on the one volume without separate secret
+management. An invalid, tampered, or unsigned cookie is never adopted as
+someone else's identity — it's handled exactly like no cookie at all, and a
+fresh identity is issued. The cookie also gained `Secure` when the request
+arrives over HTTPS (detected via `X-Forwarded-Proto`, which Fly's edge sets).
+The `color` field is now validated against the server's own `COLORS` palette
+before any read or write, closing the injection path. Structured JSON logging
+(`log()`) was added for `session_issued`, `session_rejected`, `brick_placed`,
+and `brick_rejected`, each carrying the server-resolved `visitor_id` and never
+a cookie value or signature.
+
+The full reasoning — options considered, why signing over a session-store
+table or an auth library, what counts as "a user" here, and what each visitor
+can see and change — is written up in
+[`docs/adr/002-anonymous-identity.md`](docs/adr/002-anonymous-identity.md).
+`CLAUDE.md` and `README.md` got the corresponding rules and documentation:
+never trust an unverified `visitor_id`, never log a cookie value or the
+signing secret, and what the identity model and logging actually guarantee.
+
+### Tests, and a real regression caught along the way
+
+`spec/identity.test.ts` was added: a fresh request is issued a cookie matching
+the signed shape; the same cookie keeps the same identity across requests; two
+independent requests get different identities; a request presenting another
+visitor's bare id, or that id with a wrong tag, is issued a *different* fresh
+identity rather than being treated as that visitor; a malformed cookie is
+handled without error. `spec/brick.test.ts` gained a test for the `color`
+validation: a value crafted to break out of the `style` attribute is rejected
+with `400` and never appears on the page.
+
+Running the full suite after writing these caught a real regression: changing
+the cookie's format from a bare id to `id.tag` broke two **existing** tests
+(`spec/concurrency.test.ts` and `spec/realtime.test.ts`), which had been
+parsing the cookie's value directly as the visitor id to compare against
+`bricks.visitor_id` and SSE payloads. The fix was to extract the id half
+(`cookie.split("=")[1].split(".")[0]`) rather than weaken what either test
+checks — both still assert exactly the same claims about concurrent placement
+and real-time delivery as before. `pnpm check` was run five times in a row
+afterward with all 14 tests passing every time.
+
+### Verification
+
+Locally: `pnpm check` against `node server.ts` pointed at a scratch `DB_PATH`
+— typecheck and all 14 tests passing, repeated five times with no flakiness.
+By hand, against the same local run: a forged `Cookie: visitor_id=<real-id>`
+(no tag) and a forged `Cookie: visitor_id=<real-id>.<wrong-tag>` both produced
+a `Set-Cookie` response issuing a *different*, new id — confirmed by reading
+the returned cookie value, not just the status code, so the impersonation
+attempt genuinely failed rather than coincidentally looking fine. Simulating
+`X-Forwarded-Proto: https` produced a cookie with `Secure` set; a plain HTTP
+request did not. A `color` value containing `"><script>` was rejected with
+`400` and confirmed absent from the page on reload. The server's stdout showed
+the expected `session_issued`, `session_rejected`, `brick_placed`, and
+`brick_rejected` lines for each of these, with a `visitor_id` field and never
+a cookie value.
+
+What this crit's verification does **not** cover: a genuine two-person,
+two-Chrome-profile demonstration against the **deployed** app, which happens
+at the crit itself — the two users and their separate profiles aren't
+something this environment can produce. The local, single-process checks
+above establish that the mechanism works correctly; the live crit is where it
+gets exercised by two actual people.
