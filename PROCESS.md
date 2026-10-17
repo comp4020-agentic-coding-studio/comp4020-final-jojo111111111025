@@ -257,46 +257,54 @@ found during the same close reading.
 
 ### What got built
 
-`server.ts`: the cookie's value changed from a bare `randomUUID()` to a signed
-pair, `<uuid>.<hmac-sha256-hex>`, verified with `timingSafeEqual` so a forged
-or guessed tag can't be distinguished from a correct one by timing. The
-signing key (`SESSION_SECRET`) is generated once with `randomBytes(32)` and
-persisted in a new `meta` table in the same SQLite file as `bricks`, so it
-survives restarts and redeploys on the one volume without separate secret
-management. An invalid, tampered, or unsigned cookie is never adopted as
-someone else's identity — it's handled exactly like no cookie at all, and a
-fresh identity is issued. The cookie also gained `Secure` when the request
-arrives over HTTPS (detected via `X-Forwarded-Proto`, which Fly's edge sets).
-The `color` field is now validated against the server's own `COLORS` palette
-before any read or write, closing the injection path. Structured JSON logging
-(`log()`) was added for `session_issued`, `session_rejected`, `brick_placed`,
-and `brick_rejected`, each carrying the server-resolved `visitor_id` and never
-a cookie value or signature.
+`server.ts`
+([`c05f132`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/c05f132)):
+the cookie's value changed from a bare `randomUUID()` to a signed pair,
+`<uuid>.<hmac-sha256-hex>`, verified with `timingSafeEqual` so a forged or
+guessed tag can't be distinguished from a correct one by timing. The signing
+key (`SESSION_SECRET`) is generated once with `randomBytes(32)` and persisted
+in a new `meta` table in the same SQLite file as `bricks`, so it survives
+restarts and redeploys on the one volume without separate secret management.
+An invalid, tampered, or unsigned cookie is never adopted as someone else's
+identity — it's handled exactly like no cookie at all, and a fresh identity is
+issued. The cookie also gained `Secure` when the request arrives over HTTPS
+(detected via `X-Forwarded-Proto`, which Fly's edge sets). The `color` field
+is now validated against the server's own `COLORS` palette before any read or
+write, closing the injection path. Structured JSON logging (`log()`) was
+added for `session_issued`, `session_rejected`, `brick_placed`, and
+`brick_rejected`, each carrying the server-resolved `visitor_id` and never a
+cookie value or signature.
 
 The full reasoning — options considered, why signing over a session-store
 table or an auth library, what counts as "a user" here, and what each visitor
-can see and change — is written up in
+can see and change — is written up in the ADR
+([`41ddd3f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/41ddd3f))
+at
 [`docs/adr/002-anonymous-identity.md`](docs/adr/002-anonymous-identity.md).
-`CLAUDE.md` and `README.md` got the corresponding rules and documentation:
-never trust an unverified `visitor_id`, never log a cookie value or the
-signing secret, and what the identity model and logging actually guarantee.
+`CLAUDE.md` and `README.md` got the corresponding rules and documentation in
+that same commit: never trust an unverified `visitor_id`, never log a cookie
+value or the signing secret, and what the identity model and logging actually
+guarantee.
 
 ### Tests, and a real regression caught along the way
 
-`spec/identity.test.ts` was added: a fresh request is issued a cookie matching
-the signed shape; the same cookie keeps the same identity across requests; two
-independent requests get different identities; a request presenting another
-visitor's bare id, or that id with a wrong tag, is issued a *different* fresh
-identity rather than being treated as that visitor; a malformed cookie is
-handled without error. `spec/brick.test.ts` gained a test for the `color`
-validation: a value crafted to break out of the `style` attribute is rejected
-with `400` and never appears on the page.
+`spec/identity.test.ts` and a new test in `spec/brick.test.ts`
+([`899f84c`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/899f84c)):
+a fresh request is issued a cookie matching the signed shape; the same cookie
+keeps the same identity across requests; two independent requests get
+different identities; a request presenting another visitor's bare id, or that
+id with a wrong tag, is issued a *different* fresh identity rather than being
+treated as that visitor; a malformed cookie is handled without error; a
+`color` value crafted to break out of the `style` attribute is rejected with
+`400` and never appears on the page.
 
 Running the full suite after writing these caught a real regression: changing
-the cookie's format from a bare id to `id.tag` broke two **existing** tests
-(`spec/concurrency.test.ts` and `spec/realtime.test.ts`), which had been
-parsing the cookie's value directly as the visitor id to compare against
-`bricks.visitor_id` and SSE payloads. The fix was to extract the id half
+the cookie's format from a bare id to `id.tag`
+([`c05f132`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/c05f132))
+broke two **existing** tests (`spec/concurrency.test.ts` and
+`spec/realtime.test.ts`), which had been parsing the cookie's value directly
+as the visitor id to compare against `bricks.visitor_id` and SSE payloads. The
+fix, in that same commit, was to extract the id half
 (`cookie.split("=")[1].split(".")[0]`) rather than weaken what either test
 checks — both still assert exactly the same claims about concurrent placement
 and real-time delivery as before. `pnpm check` was run five times in a row
