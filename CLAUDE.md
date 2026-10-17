@@ -34,3 +34,24 @@ Rules for working on The Wall, derived from `README.md`'s first pass at what
   instead. Keep it that way unless the deployment stops being one process
   (it is one, by course design — `fly.toml`'s one volume and the course's
   `--ha=false` deploy both assume it).
+- **The visitor cookie is signed, and only a verified id is ever trusted as
+  `mine`.** `visitorId` in `server.ts` checks the HMAC tag before accepting a
+  cookie's id; an unsigned or mistagged value is never used for ownership or
+  authorisation, only replaced with a fresh one. Don't add a code path that
+  reads `visitor_id` straight off the cookie or a request body/query/header —
+  go through `visitorId`'s verified value. See
+  `docs/adr/002-anonymous-identity.md`.
+- **`SESSION_SECRET` never leaves the server.** Not logged, not sent to a
+  client, not embedded in the HTML the client renders from. If you add a log
+  line or response field that touches a cookie or signature, log the
+  `visitor_id` it resolved to, never the raw cookie value or tag.
+- **Log session and brick outcomes, not everything.** `log()` in `server.ts`
+  is for `session_issued`, `session_rejected`, `brick_placed`, and
+  `brick_rejected` (with why). Keep it to events useful for telling two
+  visitors apart at a crit, not a line per internal step.
+- **A brick's `color` is validated against the server's own `COLORS` palette
+  before anything is read or written.** It's the one client-submitted value a
+  placement carries and it's interpolated into an HTML attribute in
+  `renderWall` — an unchecked value could break out of that attribute. x/y are
+  never client-supplied (`nextSlot` computes them), so there's no client
+  coordinate to validate, only this one field.
