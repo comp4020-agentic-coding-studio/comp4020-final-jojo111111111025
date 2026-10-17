@@ -83,7 +83,10 @@ it("an idle, already-open session receives a newly committed brick without reloa
   // concurrently against this same stream of broadcasts.
   const first = await fetch(new URL("/", baseUrl));
   const cookie = cookieFrom(first);
-  const visitorId = cookie.split("=")[1];
+  // The cookie's value is `id.tag` (crit 10, signed identity — see
+  // docs/adr/002-anonymous-identity.md); `bricks.visitor_id` and the SSE
+  // payload only ever carry the id half, so that's what "ours" means here.
+  const visitorId = cookie.split("=")[1].split(".")[0];
   const placed = await fetch(new URL("/brick", baseUrl), {
     method: "POST",
     redirect: "manual",

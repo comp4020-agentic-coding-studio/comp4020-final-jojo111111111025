@@ -89,7 +89,10 @@ it("N concurrent placements each land on a distinct cell, with none lost or dupl
     Array.from({ length: N }, async () => {
       const first = await fetch(new URL("/", baseUrl));
       const cookie = cookieFrom(first);
-      const visitorId = cookie.split("=")[1];
+      // The cookie's value is `id.tag` (crit 10, signed identity — see
+      // docs/adr/002-anonymous-identity.md); `bricks.visitor_id` only ever
+      // carries the id half, so that's what "mine" means here.
+      const visitorId = cookie.split("=")[1].split(".")[0];
       const res = await fetch(new URL("/brick", baseUrl), {
         method: "POST",
         redirect: "manual",

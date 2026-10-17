@@ -3,7 +3,7 @@
 // CLAUDE.md for the rules this file has to hold to.
 import { DatabaseSync } from "node:sqlite";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -25,6 +25,35 @@ db.exec(`
     PRIMARY KEY (x, y)
   )
 `);
+// A single persisted secret for signing the anonymous visitor cookie (see
+// `signedVisitorId`/`verifySignedVisitorId` below, and CLAUDE.md). Generated
+// once on first boot and kept in the same SQLite file as `bricks`, so it
+// survives restarts and redeploys on the one volume, but never leaves this
+// process — it is never logged or sent to a client.
+db.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+function sessionSecret(): string {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'session_secret'").get() as
+    | { value: string }
+    | undefined;
+  if (row) return row.value;
+  const secret = randomBytes(32).toString("hex");
+  db.prepare("INSERT INTO meta (key, value) VALUES ('session_secret', ?)").run(secret);
+  return secret;
+}
+const SESSION_SECRET = sessionSecret();
+
+// ---------------------------------------------------------------------------
+// Structured, server-side logging (crit 10). One JSON object per line on
+// stdout, which `flyctl logs` (and `docker logs` in CI) captures as-is — no
+// separate log file or service. Each line names an event, carries a
+// server-validated visitor_id (never a client-asserted one) where relevant,
+// and nothing secret: never the signed cookie value, the raw session tag, or
+// SESSION_SECRET itself. Kept to the events in CLAUDE.md's logging rule —
+// session issuance/rejection and brick outcomes — not every internal step.
+// ---------------------------------------------------------------------------
+function log(event: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event, ...fields }));
+}
 
 type Brick = { x: number; y: number; color: string; visitor_id: string };
 
@@ -85,15 +114,76 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Anonymous identity (crit 10). See docs/adr/002-anonymous-identity.md for
+// why: an unsigned visitor_id cookie (crit 8/9) is a value the browser hands
+// back unexamined, so a visitor could set Cookie: visitor_id=<anyone-else's-id>
+// and be treated as them. The cookie's id is still an ordinary randomUUID()
+// (no account, no sign-up — CLAUDE.md), but it now carries an HMAC-SHA256 tag
+// over that id, keyed by SESSION_SECRET, which never leaves this process. A
+// client can read and copy the whole cookie, but cannot forge a tag for an id
+// it wasn't issued, so the identity is validated by the server, not merely
+// asserted by the client.
+// ---------------------------------------------------------------------------
+function sign(id: string): string {
+  return createHmac("sha256", SESSION_SECRET).update(id).digest("hex");
+}
+
+function signedCookieValue(id: string): string {
+  return `${id}.${sign(id)}`;
+}
+
+// Returns the id only if the tag verifies; otherwise null. Constant-time
+// comparison so a malformed or guessed tag can't be distinguished from a
+// correct one by response timing.
+function verifySignedId(cookieValue: string): string | null {
+  const dot = cookieValue.lastIndexOf(".");
+  if (dot === -1) return null;
+  const id = cookieValue.slice(0, dot);
+  const tag = cookieValue.slice(dot + 1);
+  const expected = sign(id);
+  const a = Buffer.from(tag, "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length) return null;
+  return timingSafeEqual(a, b) ? id : null;
+}
+
+// True once Fly's edge has terminated TLS and forwarded the request over
+// plain HTTP inside the fly.dev network (fly.toml: force_https = true). Local
+// dev has no such header, so it never gets a cookie marked Secure on
+// http://localhost, which browsers would silently refuse to store anyway.
+function isHttps(req: IncomingMessage): boolean {
+  return req.headers["x-forwarded-proto"] === "https";
+}
+
+function setVisitorCookie(req: IncomingMessage, res: ServerResponse, id: string): void {
+  const secure = isHttps(req) ? " Secure;" : "";
+  res.setHeader(
+    "Set-Cookie",
+    `visitor_id=${signedCookieValue(id)}; Path=/; Max-Age=${60 * 60 * 24 * 365}; HttpOnly;${secure} SameSite=Lax`,
+  );
+}
+
+// The current actor, as determined by the server from a validated cookie —
+// never from a value the client merely asserts (e.g. a query parameter or an
+// unsigned header). Three cases, each logged so the crit's two sessions are
+// distinguishable from the log alone (see CLAUDE.md and spec/identity.test.ts):
+//  - no cookie at all: a brand new visitor, issued a fresh signed id
+//  - a cookie whose tag verifies: the same returning visitor
+//  - a cookie present but its tag doesn't verify (tampered, forged, or signed
+//    by a previous process's secret): treated as a new visitor, never as the
+//    id it claims, and never trusted for ownership or authorisation
 function visitorId(req: IncomingMessage, res: ServerResponse): string {
   const cookies = parseCookies(req.headers.cookie);
   const existing = cookies.visitor_id;
-  if (existing) return existing;
+  if (existing) {
+    const verified = verifySignedId(existing);
+    if (verified) return verified;
+    log("session_rejected", { reason: "invalid_signature" });
+  }
   const id = randomUUID();
-  res.setHeader(
-    "Set-Cookie",
-    `visitor_id=${id}; Path=/; Max-Age=${60 * 60 * 24 * 365}; HttpOnly; SameSite=Lax`,
-  );
+  setVisitorCookie(req, res, id);
+  log("session_issued", { visitor_id: id });
   return id;
 }
 
@@ -262,6 +352,22 @@ const server = createServer(async (req, res) => {
     const body = await readBody(req);
     const params = new URLSearchParams(body);
     const color = params.get("color") ?? COLORS[0];
+
+    // `color` is the one piece of client-submitted input a placement carries
+    // (x/y are never client-supplied — nextSlot computes them server-side, so
+    // there are no client coordinates to validate). It's interpolated into an
+    // inline style="background:${bg};..." attribute in renderWall, so an
+    // unvalidated value (e.g. containing a `"`) could break out of that
+    // attribute and inject markup into the wall every visitor loads —
+    // rejected here, against the server's own palette, before anything is
+    // read or written.
+    if (!COLORS.includes(color)) {
+      log("brick_rejected", { visitor_id: mine, reason: "invalid_color" });
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("not a valid colour");
+      return;
+    }
+
     const taken = new Set(allBricks().map((b) => `${b.x},${b.y}`));
     const slot = nextSlot(taken);
     if (slot) {
@@ -273,6 +379,7 @@ const server = createServer(async (req, res) => {
         // Broadcast only after the write has committed — never before, and
         // never if the insert below throws.
         broadcastBrick(brick);
+        log("brick_placed", { visitor_id: mine, x: brick.x, y: brick.y, color: brick.color });
         res.writeHead(303, { Location: "/" });
         res.end();
         return;
@@ -281,11 +388,13 @@ const server = createServer(async (req, res) => {
         // y) rejected the duplicate insert). Nothing was written, so
         // nothing was broadcast. Tell this visitor plainly instead of
         // silently dropping their placement.
+        log("brick_rejected", { visitor_id: mine, reason: "slot_taken", x: slot.x, y: slot.y });
         res.writeHead(303, { Location: "/?conflict=1" });
         res.end();
         return;
       }
     }
+    log("brick_rejected", { visitor_id: mine, reason: "wall_full" });
     res.writeHead(303, { Location: "/" });
     res.end();
     return;
