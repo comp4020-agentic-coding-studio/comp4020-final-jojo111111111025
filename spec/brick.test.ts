@@ -37,3 +37,25 @@ it("a placed brick is still there, as mine, on the next visit", async () => {
   const html = await again.text();
   expect(html).toContain("outline: 3px solid");
 });
+
+// Crit 10: color is the one client-submitted value a placement carries (x/y
+// are always server-computed — see CLAUDE.md), and it's interpolated into an
+// HTML attribute in renderWall, so it's validated against the server's own
+// palette before anything is read or written.
+it("rejects a colour outside the server's palette, writing nothing", async () => {
+  const first = await fetch(new URL("/", baseUrl));
+  const cookie = cookieFrom(first);
+
+  const attempt = await fetch(new URL("/brick", baseUrl), {
+    method: "POST",
+    redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+    body: `color=${encodeURIComponent('"><script>alert(1)</script>')}`,
+  });
+  expect(attempt.status).toBe(400);
+
+  // Nothing was written: the rejected value never reaches the page.
+  const back = await fetch(new URL("/", baseUrl), { headers: { Cookie: cookie } });
+  const html = await back.text();
+  expect(html).not.toContain("<script>alert(1)</script>");
+});
