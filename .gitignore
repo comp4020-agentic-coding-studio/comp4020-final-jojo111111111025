@@ -2,6 +2,16 @@ node_modules/
 dist/
 *.log
 
+# Last Shelter's client bundle (built by `pnpm build:client`) and local game
+# data — neither is checked in, both are produced/regenerated at runtime.
+public/main.js
+public/main.js.map
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
 # editor and OS junk
 .DS_Store
 ._*

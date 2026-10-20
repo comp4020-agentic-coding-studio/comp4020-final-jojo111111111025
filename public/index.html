@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Last Shelter</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #11161c;
+        color: #e8e8e8;
+        font-family: system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #game {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+      }
+      canvas {
+        display: block;
+        image-rendering: pixelated;
+        width: 100%;
+        height: 100%;
+      }
+      #hud {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        display: flex;
+        gap: 12px;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      #status {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      #prompt {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.6);
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        display: none;
+      }
+      #farm-prompt {
+        position: absolute;
+        bottom: 44px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.6);
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        display: none;
+        gap: 6px;
+        align-items: center;
+      }
+      #farm-prompt button {
+        padding: 3px 8px;
+        font-size: 12px;
+      }
+      #craft-panel {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        width: 240px;
+        max-height: 60vh;
+        overflow-y: auto;
+        background: rgba(0, 0, 0, 0.6);
+        border-radius: 6px;
+        padding: 8px;
+        font-size: 12px;
+      }
+      #craft-panel h2 {
+        margin: 0 0 6px;
+        font-size: 13px;
+      }
+      .recipe {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .recipe:last-child {
+        border-bottom: none;
+      }
+      .recipe-info {
+        flex: 1;
+      }
+      .recipe-name {
+        font-weight: 600;
+      }
+      .recipe-cost {
+        opacity: 0.75;
+      }
+      .recipe button {
+        background: #3a6b3a;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 4px 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .recipe button:disabled {
+        background: #444;
+        color: #888;
+        cursor: not-allowed;
+      }
+      #craft-feedback {
+        min-height: 16px;
+        margin-top: 6px;
+        opacity: 0.9;
+      }
+      #chest-panel {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(10, 10, 10, 0.92);
+        border-radius: 8px;
+        padding: 12px;
+        width: 260px;
+        font-size: 13px;
+        display: none;
+      }
+      #chest-panel h2 {
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+      #chest-panel .note {
+        opacity: 0.7;
+        margin-bottom: 8px;
+      }
+      .chest-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 3px 0;
+      }
+      .chest-row button {
+        margin-left: 4px;
+        padding: 2px 6px;
+        font-size: 11px;
+      }
+      #chest-close {
+        margin-top: 8px;
+        width: 100%;
+      }
+      #join-screen {
+        position: fixed;
+        inset: 0;
+        background: #11161c;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+      }
+      #join-box {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 28px;
+        width: 320px;
+      }
+      #join-box h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+      }
+      #join-box label {
+        display: block;
+        font-size: 13px;
+        opacity: 0.8;
+        margin-bottom: 4px;
+      }
+      #join-box input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+        margin-bottom: 14px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(0, 0, 0, 0.3);
+        color: #fff;
+        font-size: 14px;
+      }
+      #join-box button {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 6px;
+        background: #3a6b3a;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      #join-error {
+        min-height: 18px;
+        margin-top: 10px;
+        color: #ff8080;
+        font-size: 13px;
+      }
+      #roster-panel {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.5);
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        display: flex;
+        gap: 10px;
+      }
+      .roster-entry.disconnected {
+        opacity: 0.5;
+      }
+      #health-bar {
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        width: 180px;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 12px;
+      }
+      #health-bar .track {
+        width: 100%;
+        height: 10px;
+        background: #311;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      #health-bar .fill {
+        height: 100%;
+        background: #3cb43c;
+        transition: width 0.15s;
+      }
+      #health-bar.low .fill {
+        background: #c23a3a;
+      }
+      #damage-flash {
+        position: fixed;
+        inset: 0;
+        background: rgba(200, 30, 30, 0.35);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.1s;
+        z-index: 5;
+      }
+      #damage-flash.show {
+        opacity: 1;
+      }
+      #death-screen {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 0, 0, 0.75);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        z-index: 8;
+        gap: 14px;
+      }
+      #death-screen h1 {
+        margin: 0;
+        font-size: 28px;
+      }
+      #death-screen button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        background: #6b3a3a;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      #combat-feedback {
+        position: absolute;
+        bottom: 60px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.6);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        min-height: 16px;
+        opacity: 0.9;
+      }
+      #zone-prompt {
+        position: absolute;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.6);
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        display: none;
+      }
+      #beacon-panel {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(10, 10, 10, 0.92);
+        border-radius: 8px;
+        padding: 14px;
+        width: 280px;
+        font-size: 13px;
+        display: none;
+      }
+      #beacon-panel h2 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+      #beacon-panel .req-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 3px 0;
+      }
+      #beacon-panel .req-row.met {
+        color: #6fd66f;
+      }
+      #beacon-panel button {
+        margin-top: 10px;
+        width: 100%;
+        padding: 8px;
+        border: none;
+        border-radius: 6px;
+        background: #6b4ab0;
+        color: #fff;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #beacon-panel button:disabled {
+        background: #444;
+        color: #888;
+        cursor: not-allowed;
+      }
+      #beacon-deposit-rows {
+        margin-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        padding-top: 8px;
+      }
+      #beacon-deposit-rows .deposit-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 3px 0;
+      }
+      #beacon-deposit-rows button {
+        margin: 0;
+        width: auto;
+        padding: 3px 8px;
+        font-size: 11px;
+      }
+      #beacon-close {
+        margin-top: 10px;
+        background: #444 !important;
+      }
+      #night-indicator {
+        position: absolute;
+        top: 44px;
+        right: 8px;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        display: none;
+      }
+      #victory-screen {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 5, 20, 0.88);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        z-index: 9;
+        gap: 10px;
+        text-align: center;
+      }
+      #victory-screen h1 {
+        margin: 0;
+        font-size: 36px;
+        color: #c9a7ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="join-screen">
+      <div id="join-box">
+        <h1>Last Shelter</h1>
+        <label for="join-name">Name</label>
+        <input id="join-name" type="text" maxlength="24" placeholder="Your name" />
+        <label for="join-room-code">Room code</label>
+        <input id="join-room-code" type="text" maxlength="32" value="__ROOM_CODE__" />
+        <button id="join-button">Join</button>
+        <div id="join-error"></div>
+      </div>
+    </div>
+    <div id="game">
+      <canvas id="canvas" width="800" height="600"></canvas>
+      <div id="damage-flash"></div>
+      <div id="hud">
+        <span>🪵 <span id="wood">0</span></span>
+        <span>🪨 <span id="stone">0</span></span>
+        <span>🍓 <span id="berries">0</span></span>
+        <span>🌱 <span id="seed_berry">0</span></span>
+        <span>🪓 <span id="axe">0</span></span>
+        <span>⛏️ <span id="pickaxe">0</span></span>
+        <span>🗡️ <span id="sword">0</span></span>
+        <span>🩹 <span id="bandage">0</span></span>
+        <span>✨ <span id="ancient_core">0</span></span>
+      </div>
+      <div id="status">connecting…</div>
+      <div id="night-indicator">🌙 night</div>
+      <div id="roster-panel"></div>
+      <div id="prompt">press E to gather</div>
+      <div id="zone-prompt"></div>
+      <div id="farm-prompt"></div>
+      <div id="combat-feedback"></div>
+      <div id="health-bar">
+        <span>❤️ <span id="health-value">100</span>/100</span>
+        <div class="track"><div class="fill" id="health-fill" style="width: 100%"></div></div>
+        <div style="margin-top: 4px; opacity: 0.8;">Space to attack nearest enemy</div>
+      </div>
+      <div id="craft-panel">
+        <h2>Crafting</h2>
+        <div id="recipe-list"></div>
+        <div id="craft-feedback"></div>
+        <h2>Building <span style="font-weight:400;opacity:0.7">(place in front of you)</span></h2>
+        <div id="building-list"></div>
+      </div>
+      <div id="chest-panel">
+        <h2>Storage Chest</h2>
+        <div class="note">Shared — any player can deposit or withdraw here.</div>
+        <div id="chest-rows"></div>
+        <button id="chest-close">Close (C)</button>
+      </div>
+      <div id="beacon-panel">
+        <h2>Ancient Beacon</h2>
+        <div id="beacon-requirements"></div>
+        <div id="beacon-deposit-rows"></div>
+        <button id="beacon-activate">Activate Beacon</button>
+        <button id="beacon-close">Close (B)</button>
+      </div>
+    </div>
+    <div id="death-screen">
+      <h1>You died</h1>
+      <div>Your inventory is safe. Respawn at the campsite.</div>
+      <button id="respawn-button">Respawn</button>
+    </div>
+    <div id="victory-screen">
+      <h1>🏮 The Beacon is Lit 🏮</h1>
+      <div id="victory-detail"></div>
+    </div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

@@ -1,107 +1,88 @@
-# The Wall
+# Last Shelter
 
-## What it is
+A browser-based, top-down 2D cooperative survival/crafting game. One to four
+players share one authoritative world over WebSockets: gather resources,
+craft tools and buildings, farm, fight off wanderers and a boss, and
+activate a beacon together to win.
 
-The Wall is a small shared wall where visitors add one brick at a time.
-A visitor chooses a colour and their brick is placed into the next available
-space.
-
-The wall is intentionally bounded and fills from left to right, then top to
-bottom. There is no account, chat, likes, or infinite scroll.
-
-Since crit 9, the wall updates live: a brick placed by one visitor appears for
-everyone else who has the page open, without a reload. How two visitors
-placing at once is resolved is written down in
-[`docs/adr/001-concurrent-brick-placement.md`](docs/adr/001-concurrent-brick-placement.md).
-
-## Who is "a visitor" here
-
-A visitor is a browser holding a signed `visitor_id` cookie — there is still
-no account, login, username, or password. The server issues a fresh anonymous
-id (a UUID) the first time a browser arrives, and the cookie that carries it
-is tagged with an HMAC signature the server alone can produce, so a visitor
-can't simply set their cookie to someone else's id and be recognised as them.
-An unsigned, tampered, or otherwise unverifiable cookie is never trusted as
-proof of identity — it's treated exactly like no cookie at all, and a fresh
-id is issued. The full reasoning, including why this is enough and an account
-system wouldn't add anything The Wall needs, is in
-[`docs/adr/002-anonymous-identity.md`](docs/adr/002-anonymous-identity.md).
-
-## What a visitor can see and change
-
-Every visitor sees the same shared wall — there's no private view. A visitor
-can place exactly one brick at a time, into the next open cell in reading
-order; nobody can choose a cell, edit another visitor's brick, or remove any
-brick (there's no route that does either). What's new since crit 10 is that
-this is actually enforced against a server-verified identity rather than a
-cookie value a client could edit: the server decides whose brick is whose,
-and a brick's `visitor_id` always comes from that verified identity, never
-from anything the request body, a header, or a query parameter claims.
-
-## Logging
-
-The server prints one JSON line per significant event to stdout: a new
-identity issued, an invalid cookie rejected, a brick placed, or a brick
-rejected (and why — an occupied cell, an invalid colour, or a full wall).
-Each line carries a timestamp, the event name, and the visitor id the server
-itself resolved — never a cookie value, a signature, or any other secret.
-Locally that's just the terminal `node server.ts` runs in; on the deployed
-app it's read with:
+## Run it
 
 ```sh
-mise exec -- flyctl logs -a comp4020-final-jojo111111111025
+pnpm install
+pnpm approve-builds --all   # allows better-sqlite3's native build + esbuild
+pnpm build:client
+pnpm dev                    # starts the server on :8080
 ```
 
-This is what lets two visitors be told apart during a live demonstration:
-the narration comes from these lines, not from watching either browser.
+Open `http://localhost:8080`. You'll land on a join screen — enter a name
+and the room code shown (defaults to `LAST-SHELTER`; override with the
+`ROOM_CODE` env var). Refreshing the page or closing/reopening the tab
+within 5 minutes reconnects you as the same player with your inventory,
+health, and position intact, via a signed, httpOnly identity cookie the
+server issues on first load.
 
-## Limitations
+- WASD/arrow keys move; `E` gathers from a nearby resource node, attacks an
+  adjacent enemy, or interacts with a dungeon entrance/exit, depending on
+  what's in range.
+- The crafting panel (bottom right) lists every recipe with its cost; the
+  "Craft" button is disabled client-side when you can't afford it, but the
+  server re-validates every request regardless.
+- The building section of the same panel places a building directly in
+  front of you; `C` opens the nearest shared storage chest.
+- Standing near a farm plot shows plant/water/harvest buttons for its
+  current stage.
+- A day/night cycle (derived from elapsed wall-clock time, never a stored
+  "current phase") brings out aggressive wanderers at night; a dungeon
+  holds a telegraphed boss fight. Defeating the boss and depositing enough
+  wood, stone, and the boss's ancient core at the beacon activates it —
+  the room's shared win condition.
+- The player list at the top shows everyone in the room and whether
+  they're connected or just holding their slot during a reconnect grace
+  window.
 
-The identity is tied to a browser's cookie jar, not a person: clearing
-cookies, or opening a private window, gets a new identity, and there's no way
-(by design — see the ADR) to prove two sessions are the same human or
-different humans beyond that. `SESSION_SECRET` lives in the same SQLite file
-as the wall itself, so a fresh database (a new Fly volume) invalidates every
-previously-issued cookie at once; existing visitors are simply treated as new
-ones, not locked out or errored. Logging is to stdout only — there's no log
-rotation or external log storage beyond what Fly retains.
+## Identity and authorization
 
-## What good means
+A player is a browser holding a signed `ls_id` cookie (httpOnly,
+`SameSite=Lax`, 30-day expiry, rotated after 7 days, HMAC-SHA256 tagged
+with a secret generated once and persisted server-side) — there is no
+account, login, or password. A missing, tampered, expired, or revoked
+cookie is never partially trusted: it's treated like no cookie at all,
+and a fresh anonymous identity is minted instead. Every mutating action
+(gather, craft, build, farm, attack, deposit, activate) is revalidated
+server-side against that verified identity — range, cooldown, zone, and
+ownership are never taken on the client's word. See
+[`docs/adr/001-anonymous-identity.md`](docs/adr/001-anonymous-identity.md)
+for the full reasoning and verification evidence.
 
-For this first version, I think a good version of The Wall should be:
+## Check it
 
-### Easy to understand
+```sh
+pnpm typecheck
+pnpm test
+```
 
-A stranger should be able to understand what to do from the page itself,
-without needing an explanation from me.
+## Architecture
 
-### Small and constrained
+- `src/shared/` — types, constants, the map generator, the recipe
+  registry, the pure day/night and crop-growth functions, and the
+  Zod-validated WebSocket message schemas shared by client and server.
+- `src/server/` — `db.ts` (SQLite + migrations), `identity.ts`
+  (signed-cookie minting/verification, revocation), `world.ts`
+  (state load-and-persist, pending-reward claiming), `room.ts` (the
+  authoritative simulation — movement, combat, dungeon, beacon), `net.ts`
+  (WebSocket dispatch, room/player-cap enforcement, reconnect handling,
+  rate limiting, structured logging), `index.ts` (HTTP server: identity
+  cookie, static files, `/readme/`, the `/ws` upgrade).
+- `src/client/` — vanilla TypeScript, Canvas 2D rendering, native HTML UI.
+- `spec/` — Vitest unit and full wire-protocol integration tests (`spec/
+  helpers/server-harness.ts` spins up a real HTTP+WS server per test
+  against a temp SQLite file) covering movement, gathering, crafting,
+  building, farming, combat, day/night, dungeon zoning, beacon victory,
+  reconnect, room limits, and cross-room isolation.
 
-The wall should feel like a small shared object rather than another social
-media feed. The fixed 20×12 grid and one-brick-per-visit rule give the
-interaction a clear boundary.
+## Persistence
 
-### Persistent
-
-An action should have a consequence that remains after the page is refreshed
-or the visitor returns. A visitor should be able to recognise the bricks they
-placed without creating an account.
-
-### Shared but personal
-
-Different visitors should see the same wall, while each visitor can still
-recognise their own contribution.
-
-## What informed this
-
-I used the COMP4020 final-project brief and the Crit 8 brief as the main
-starting points. In particular, the discussion of the small web, games for a
-handful of friends, and tools built for one workshop influenced my decision
-to keep the project small and focused rather than building a general-purpose
-social application.
-
-I also looked at [Robin Sloan's "Home-Cooked App"](https://www.robinsloan.com/notes/home-cooked-app/)
-as an example of thinking about small, personal web projects.
-
-This is a first version of what I think makes the project good. I expect
-these criteria to change as the project develops.
+Everything survives a restart: the world seed and resource depletion,
+buildings, chest contents, farm plot timestamps, each identity's
+inventory and health, boss-defeated/beacon state, and any pending reward
+owed to a player who was evicted before a reward landed.

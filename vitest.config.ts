@@ -1,10 +1,14 @@
 import { defineConfig } from "vitest/config";
 
-// Every test in spec/ runs against the running app, which spec/global-setup.ts
-// finds. Only spec/ runs: a test anywhere else needs adding to `include`.
+// spec/invariants.test.ts is the one test here that checks the RUNNING app
+// (over HTTP, via spec/global-setup.ts) rather than spinning up its own
+// server — see spec/README.md. Every *.spec.ts file is a Last Shelter test
+// that starts its own in-process server per test (spec/helpers/
+// server-harness.ts) and ignores APP_URL entirely.
 export default defineConfig({
   test: {
-    include: ["spec/**/*.test.ts"],
+    environment: "node",
+    include: ["spec/**/*.test.ts", "spec/**/*.spec.ts"],
     globalSetup: ["./spec/global-setup.ts"],
   },
 });

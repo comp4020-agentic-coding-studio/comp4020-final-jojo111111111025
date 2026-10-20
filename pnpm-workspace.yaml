@@ -1,3 +1,9 @@
-# esbuild (used by Vitest) needs its postinstall to set up its native binary.
+# esbuild (client bundling, and used by Vitest) and better-sqlite3 (the
+# server's persistence layer) both need their postinstall to set up a native
+# binary.
 allowBuilds:
+  better-sqlite3: true
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@rollup/rollup-linux-arm64-gnu@4.64.8'
+  - '@rollup/rollup-openharmony-arm64@4.64.8'
