@@ -20,25 +20,24 @@ unchanged.
 
 Last Shelter is a browser-based, top-down 2D cooperative survival/crafting
 game for one to four players sharing one authoritative world over
-WebSockets. The brief's exit criteria were built in four phases, each
-committed as a complete, tested slice:
+WebSockets. The brief's exit criteria were built and tested in four phases:
 
-- **Phase A** ([`b7e6a7f`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/b7e6a7fbbe03d64e4029b128c8a09f9e303aca94)):
+- **Phase A**:
   a deterministic, seeded 64×64 map, movement/collision, and
   server-validated resource gathering — the minimum vertical slice, stood
   up with TypeScript, `ws`, `better-sqlite3`, `zod`, and Vitest.
-- **Phase B** ([`869abcd`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/869abcd45142f872627e3f3b22a0542b681fb9e3)):
+- **Phase B**:
   a stackable inventory, data-driven crafting, building placement (with a
   `UNIQUE(x, y)` constraint giving the same atomic-placement guarantee The
   Wall's `bricks` table used), shared storage chests, and timestamp-based
   farming.
-- **Phase C** ([`6910052`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/6910052829aa67267c6434fa6041fde15578ae73)):
+- **Phase C**:
   replaced the per-connection throwaway id with a stable, server-verified
   anonymous identity — a signed, httpOnly cookie (HMAC-SHA256, timing-safe
   comparison, 30-day expiry, 7-day rotation, revocation) — plus
   room/player-limit enforcement and reconnect/duplicate-connection
   handling.
-- **Phase D** ([`86bf6a8`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/86bf6a8b637b091f1312ac13baaa834bf764b92d)):
+- **Phase D**:
   survival (health/death/respawn), a wall-clock-derived day/night cycle,
   server-validated melee combat against AI-driven enemies, a structurally
   separate dungeon coordinate space, and the beacon win condition, with
@@ -49,7 +48,7 @@ committed as a complete, tested slice:
 
 Between Phase C and Phase D, auditing in-memory/SQLite consistency before
 starting Phase D turned up a real gap
-([`90aa88a`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-jojo111111111025/commit/90aa88a4cb030ea359819eb4495ff9c67c01a190)):
+(during the Phase C-to-D regression audit):
 the integration test harness (`spec/helpers/server-harness.ts`) built its
 `Room` with no `RoomPersistence` hooks at all, unlike production
 (`src/server/index.ts`), which wires every hook. Every "full stack"
