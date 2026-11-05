@@ -21,9 +21,9 @@ within 5 minutes reconnects you as the same player with your inventory,
 health, and position intact, via a signed, httpOnly identity cookie the
 server issues on first load.
 
-- WASD/arrow keys move; `E` gathers from a nearby resource node, attacks an
-  adjacent enemy, or interacts with a dungeon entrance/exit, depending on
-  what's in range.
+- WASD/arrow keys move; `E` gathers from a nearby resource node or
+  interacts with a dungeon entrance/exit, depending on what's in range;
+  `Space` attacks the nearest adjacent enemy.
 - The crafting panel (bottom right) lists every recipe with its cost; the
   "Craft" button is disabled client-side when you can't afford it, but the
   server re-validates every request regardless.

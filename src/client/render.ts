@@ -67,6 +67,8 @@ export function render(
   camera: { x: number; y: number },
   viewport: { width: number; height: number },
   isNight: boolean,
+  /** World-space centres of whatever a key press would currently act on (gather/zone-transition target for E, an attackable enemy for Space, a chest for C) — drawn as rings so a first-time player can see what a key will do before pressing it. Empty when nothing is in range. */
+  highlights: Array<{ x: number; y: number; color: string }> = [],
 ): void {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, viewport.width, viewport.height);
@@ -105,6 +107,16 @@ export function render(
 
   for (const enemy of enemies) {
     drawEnemy(ctx, enemy, originX, originY);
+  }
+
+  for (const h of highlights) {
+    const hx = h.x * TILE_SIZE - originX;
+    const hy = h.y * TILE_SIZE - originY;
+    ctx.strokeStyle = h.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(hx, hy, TILE_SIZE * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   for (const player of players) {

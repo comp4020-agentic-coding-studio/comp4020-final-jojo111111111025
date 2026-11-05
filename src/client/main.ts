@@ -3,12 +3,14 @@ import {
   BUILD_RANGE_TILES,
   FARM_RANGE_TILES,
   GATHER_RANGE_TILES,
+  SNAPSHOT_MS,
   ZONE_TRANSITION_RANGE_TILES,
 } from "../shared/constants.js";
 import { computeCropStage, SEED_TO_CROP } from "../shared/farming.js";
 import { RECIPES } from "../shared/recipes.js";
 import type { Building, CropStage, DungeonMap, FarmPlotState, ItemKind, MapObject, WorldMap, Zone } from "../shared/types.js";
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
+import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
 import { GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
 
@@ -19,6 +21,7 @@ const promptEl = document.getElementById("prompt")!;
 const zonePromptEl = document.getElementById("zone-prompt")!;
 const farmPromptEl = document.getElementById("farm-prompt")!;
 const combatFeedbackEl = document.getElementById("combat-feedback")!;
+const actionFeedbackEl = document.getElementById("action-feedback")!;
 const recipeListEl = document.getElementById("recipe-list")!;
 const craftFeedbackEl = document.getElementById("craft-feedback")!;
 const buildingListEl = document.getElementById("building-list")!;
@@ -45,6 +48,12 @@ const beaconActivateEl = document.getElementById("beacon-activate") as HTMLButto
 const beaconCloseEl = document.getElementById("beacon-close")!;
 const victoryScreenEl = document.getElementById("victory-screen")!;
 const victoryDetailEl = document.getElementById("victory-detail")!;
+const touchJoystickEl = document.getElementById("touch-joystick")!;
+const touchJoystickKnobEl = document.getElementById("touch-joystick-knob")!;
+const touchInteractEl = document.getElementById("touch-interact") as HTMLButtonElement;
+const touchAttackEl = document.getElementById("touch-attack") as HTMLButtonElement;
+const touchChestEl = document.getElementById("touch-chest") as HTMLButtonElement;
+const touchBeaconEl = document.getElementById("touch-beacon") as HTMLButtonElement;
 const resourceEls: Partial<Record<ItemKind, HTMLElement>> = {
   wood: document.getElementById("wood") ?? undefined,
   stone: document.getElementById("stone") ?? undefined,
@@ -66,6 +75,32 @@ const remotePlayers = new Map<string, { x: number; y: number; zone: Zone; alive:
 const buildings = new Map<string, Building>();
 const farmPlots = new Map<string, FarmPlotState>();
 let enemies: SnapshotEnemy[] = [];
+
+// Render-only position smoothing (see interpolation.ts): the server remains
+// authoritative, these buffers only decide where a remote entity is *drawn*
+// between the ~10Hz position broadcasts in onSnapshot/onPlayerState.
+const remotePlayerBuffers = new Map<string, InterpolationBuffer>();
+const enemyBuffers = new Map<string, InterpolationBuffer>();
+/** Sampled slightly behind the client's own clock so sample() is interpolating between two already-received points rather than guessing ahead of the newest one. */
+const RENDER_DELAY_MS = SNAPSHOT_MS * 1.5;
+
+function recordRemotePlayerPosition(id: string, x: number, y: number): void {
+  let buf = remotePlayerBuffers.get(id);
+  if (!buf) {
+    buf = new InterpolationBuffer();
+    remotePlayerBuffers.set(id, buf);
+  }
+  buf.push(x, y, performance.now());
+}
+
+function recordEnemyPosition(id: string, x: number, y: number): void {
+  let buf = enemyBuffers.get(id);
+  if (!buf) {
+    buf = new InterpolationBuffer();
+    enemyBuffers.set(id, buf);
+  }
+  buf.push(x, y, performance.now());
+}
 let beaconProgress: BeaconProgress | null = null;
 let isNight = false;
 let serverTimeOffsetMs = 0; // serverNow - Date.now(), sampled once at join
@@ -84,6 +119,11 @@ function serverNow(): number {
 const keys = new Set<string>();
 window.addEventListener("keydown", (e) => keys.add(e.key.toLowerCase()));
 window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+// A keyup while the window isn't focused (alt-tab, DevTools, another app)
+// never reaches this page, so a held movement key can get stuck "down"
+// until the same key is pressed again. Losing focus clears every held key,
+// the same way releasing them all would.
+window.addEventListener("blur", () => keys.clear());
 
 function resize(): void {
   canvas.width = window.innerWidth;
@@ -98,6 +138,59 @@ const ERROR_MESSAGES: Record<string, string> = {
   superseded: "You joined from another tab or window.",
   not_joined: "You need to join the room first.",
 };
+
+/**
+ * Every `reason` the server can send back on a rejected action
+ * (`src/server/room.ts` / `net.ts`), mapped to one short, player-facing
+ * sentence. Kept exhaustive on purpose — a server reason with no entry here
+ * falls back to a raw, less friendly string in `showActionFeedback`, which
+ * is a visible signal to add it rather than a silent drop.
+ */
+const ACTION_REASON_MESSAGES: Record<string, string> = {
+  too_far: "Too far away.",
+  wrong_zone: "Can't do that here.",
+  dead: "You're dead — respawn first.",
+  not_dead: "You're not dead.",
+  already_dead: "Already defeated.",
+  already_activated: "The beacon is already lit.",
+  already_in_zone: "You're already there.",
+  already_mature: "Already fully grown.",
+  boss_not_defeated: "Defeat the boss first.",
+  on_cooldown: "Not ready yet.",
+  insufficient_materials: "Not enough materials.",
+  inventory_full: "Your inventory is full.",
+  chest_full: "The chest is full.",
+  cell_occupied: "Something's already there.",
+  out_of_bounds: "Can't place it there.",
+  depleted: "Nothing left to gather here.",
+  not_gatherable: "Nothing to gather there.",
+  invalid_quantity: "Invalid amount.",
+  invalid_seed: "Can't plant that there.",
+  plot_empty: "Nothing planted here yet.",
+  plot_occupied: "Something's already planted here.",
+  not_mature: "Not ready to harvest yet.",
+  not_a_building_recipe: "That recipe isn't a building.",
+  not_an_item_recipe: "That recipe isn't an item.",
+  not_a_zone_transition: "That's not an entrance.",
+  unknown_recipe: "Unknown recipe.",
+  unknown_object: "That's gone.",
+  unknown_target: "That target's gone.",
+  unknown_chest: "That chest is gone.",
+  unknown_plot: "That plot is gone.",
+  unknown_player: "You're not recognised — try rejoining.",
+  unknown_item_kind: "Unknown item.",
+  rate_limited: "Slow down a little.",
+};
+
+let actionFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+/** The one place every action rejection (and confirmation, when useful) surfaces to the player — see onActionResult. */
+function showActionFeedback(message: string, isError: boolean): void {
+  actionFeedbackEl.textContent = message;
+  actionFeedbackEl.classList.toggle("err", isError);
+  actionFeedbackEl.classList.add("show");
+  clearTimeout(actionFeedbackTimer);
+  actionFeedbackTimer = setTimeout(() => actionFeedbackEl.classList.remove("show"), 2200);
+}
 
 let hasJoinedOnce = false;
 
@@ -124,13 +217,23 @@ const client = new GameClient({
         updateInventory(p.inventory);
         updateHealthUi();
         updateDeathUi();
+      } else {
+        recordRemotePlayerPosition(p.id, p.x, p.y);
       }
+    }
+    // A full snapshot is the authoritative player list — drop buffers for
+    // anyone no longer present instead of letting them grow unbounded.
+    const presentIds = new Set(players.map((p) => p.id));
+    for (const id of [...remotePlayerBuffers.keys()]) {
+      if (!presentIds.has(id)) remotePlayerBuffers.delete(id);
     }
     buildings.clear();
     for (const b of snapshotBuildings) buildings.set(b.id, b);
     farmPlots.clear();
     for (const plot of snapshotFarmPlots) farmPlots.set(plot.buildingId, plot);
     enemies = snapshotEnemies;
+    enemyBuffers.clear();
+    for (const e of snapshotEnemies) recordEnemyPosition(e.id, e.x, e.y);
     beaconProgress = progress;
     renderRecipes();
     renderBuildingOptions();
@@ -157,12 +260,22 @@ const client = new GameClient({
         updateHealthUi();
         if (wasAlive && !p.alive) flashDamage();
         updateDeathUi();
+      } else {
+        recordRemotePlayerPosition(p.id, p.x, p.y);
       }
     }
     enemies = snapshotEnemies.map((e) => {
       const prev = enemies.find((existing) => existing.id === e.id);
       return prev ? { ...prev, ...e } : { kind: "wanderer", zone: localZone, maxHealth: e.health, ...e };
     });
+    for (const e of snapshotEnemies) recordEnemyPosition(e.id, e.x, e.y);
+    // player.state only ever lists currently-alive enemies (room.ts's
+    // getEnemies filters on e.alive), so a dead enemy's buffer is dropped
+    // here rather than retained until the next full world.snapshot.
+    const aliveEnemyIds = new Set(snapshotEnemies.map((e) => e.id));
+    for (const id of [...enemyBuffers.keys()]) {
+      if (!aliveEnemyIds.has(id)) enemyBuffers.delete(id);
+    }
     isNight = night;
     nightIndicatorEl.style.display = isNight ? "block" : "none";
   },
@@ -175,7 +288,7 @@ const client = new GameClient({
       const isBuilding = recipe?.output.type === "building";
       craftFeedbackEl.textContent = result.ok
         ? `${isBuilding ? "Placed" : "Crafted"} ${recipe?.name ?? result.recipeId}.`
-        : `Can't ${isBuilding ? "build" : "craft"}: ${result.reason}`;
+        : `Can't ${isBuilding ? "build" : "craft"}: ${ACTION_REASON_MESSAGES[result.reason ?? ""] ?? result.reason}`;
     }
     if (result.chestItems) {
       lastChestItems = result.chestItems;
@@ -196,14 +309,14 @@ const client = new GameClient({
     if (result.damageDealt !== undefined) {
       combatFeedbackEl.textContent = result.ok
         ? `Hit for ${result.damageDealt}${result.enemyDied ? " — defeated!" : ""}`
-        : `Can't attack: ${result.reason}`;
-    } else if (result.enemyHealth === undefined && result.reason && !result.recipeId && !result.chestItems) {
-      // A bare failed action.result with a reason and none of the above
-      // payload shapes is most often a beacon/zone/attack rejection — surface
-      // it somewhere visible rather than silently dropping it.
-      if (["too_far", "wrong_zone", "insufficient_materials", "boss_not_defeated", "already_activated", "on_cooldown", "unknown_target", "already_dead"].includes(result.reason)) {
-        combatFeedbackEl.textContent = `Can't: ${result.reason}`;
-      }
+        : `Can't attack: ${ACTION_REASON_MESSAGES[result.reason ?? ""] ?? result.reason}`;
+    }
+    // Every rejected action, whatever its shape, gets one visible message —
+    // the specific panels above (craft/combat feedback) add flavour text for
+    // their own cases, but this is the single catch-all so no `reason` the
+    // server can send is ever silently dropped (see ACTION_REASON_MESSAGES).
+    if (!result.ok && result.reason) {
+      showActionFeedback(ACTION_REASON_MESSAGES[result.reason] ?? `Can't: ${result.reason}`, true);
     }
   },
   onEntitySpawned(building) {
@@ -597,54 +710,130 @@ function nearestAttackableEnemy(): SnapshotEnemy | null {
   return best;
 }
 
+/** The E action: gather/interact if something's in range, otherwise use a zone transition in range. Shared by the keyboard handler and the touch interact button. */
+function performInteract(): void {
+  const gatherTarget = nearestInteractable();
+  if (gatherTarget) {
+    client.interact(gatherTarget.id, crypto.randomUUID());
+    return;
+  }
+  const zoneObj = nearestZoneTransition();
+  if (zoneObj) {
+    const target: Zone = localZone === "overworld" ? "dungeon" : "overworld";
+    client.enterZone(zoneObj.id, target, crypto.randomUUID());
+  }
+}
+
+/** The Space action: attack the nearest enemy in range. Shared by the keyboard handler and the touch attack button. */
+function performAttack(): void {
+  if (!localAlive) return;
+  const target = nearestAttackableEnemy();
+  if (target) client.attack(target.id, crypto.randomUUID());
+}
+
+/** The C action: toggle the nearest chest. Shared by the keyboard handler and the touch chest button. */
+function performToggleChest(): void {
+  if (openChestId) {
+    closeChest();
+  } else {
+    const chest = nearestChest();
+    if (chest) openChest(chest.id);
+  }
+}
+
+/** The B action: toggle the beacon panel. Shared by the keyboard handler and the touch beacon button. */
+function performToggleBeacon(): void {
+  if (beaconOpen) {
+    closeBeacon();
+  } else if (nearestBeacon()) {
+    openBeacon();
+  }
+}
+
 window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
-  if (key === "e") {
-    const gatherTarget = nearestInteractable();
-    if (gatherTarget) {
-      client.interact(gatherTarget.id, crypto.randomUUID());
-      return;
-    }
-    const zoneObj = nearestZoneTransition();
-    if (zoneObj) {
-      const target: Zone = localZone === "overworld" ? "dungeon" : "overworld";
-      client.enterZone(zoneObj.id, target, crypto.randomUUID());
-    }
-  }
+  if (key === "e") performInteract();
   if (key === " ") {
     e.preventDefault();
-    if (!localAlive) return;
-    const target = nearestAttackableEnemy();
-    if (target) client.attack(target.id, crypto.randomUUID());
+    performAttack();
   }
-  if (key === "c") {
-    if (openChestId) {
-      closeChest();
-    } else {
-      const chest = nearestChest();
-      if (chest) openChest(chest.id);
-    }
-  }
-  if (key === "b") {
-    if (beaconOpen) {
-      closeBeacon();
-    } else if (nearestBeacon()) {
-      openBeacon();
-    }
-  }
+  if (key === "c") performToggleChest();
+  if (key === "b") performToggleBeacon();
 });
+
+/** Set by the touch joystick's pointer handlers below; {0,0} when no touch drag is active. Kept separate from `keys` so a touch drag and a held keyboard key never fight — sendInputFromKeys sums them and clamps to [-1,1], the same range the server already clamps `setInput` to. */
+let touchMove = { dx: 0, dy: 0 };
+
+// Touch joystick: one pointer at a time drags the knob within a fixed
+// radius of the base's centre; dx/dy is that offset normalised to [-1,1].
+// Pointer Events (not touchstart/touchmove) so the same code also works
+// with a mouse for manual testing without a real touch device.
+(function setUpTouchJoystick(): void {
+  const JOYSTICK_RADIUS_PX = 50;
+  let activePointerId: number | null = null;
+
+  function setKnob(dx: number, dy: number): void {
+    touchJoystickKnobEl.style.transform = `translate(${dx * JOYSTICK_RADIUS_PX}px, ${dy * JOYSTICK_RADIUS_PX}px)`;
+  }
+
+  function updateFromEvent(e: PointerEvent): void {
+    const rect = touchJoystickEl.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const rawDx = (e.clientX - cx) / JOYSTICK_RADIUS_PX;
+    const rawDy = (e.clientY - cy) / JOYSTICK_RADIUS_PX;
+    const mag = Math.hypot(rawDx, rawDy);
+    const clamped = mag > 1 ? { x: rawDx / mag, y: rawDy / mag } : { x: rawDx, y: rawDy };
+    touchMove = { dx: clamped.x, dy: clamped.y };
+    setKnob(clamped.x, clamped.y);
+  }
+
+  function release(): void {
+    activePointerId = null;
+    touchMove = { dx: 0, dy: 0 };
+    setKnob(0, 0);
+  }
+
+  touchJoystickEl.addEventListener("pointerdown", (e) => {
+    activePointerId = e.pointerId;
+    touchJoystickEl.setPointerCapture(e.pointerId);
+    updateFromEvent(e);
+  });
+  touchJoystickEl.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    updateFromEvent(e);
+  });
+  touchJoystickEl.addEventListener("pointerup", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    release();
+  });
+  touchJoystickEl.addEventListener("pointercancel", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    release();
+  });
+})();
+
+// Touch action buttons call the exact same handlers the keyboard does
+// (performInteract/performAttack/performToggleChest/performToggleBeacon),
+// so touch and keyboard can never diverge in what a given action does.
+touchInteractEl.addEventListener("click", () => performInteract());
+touchAttackEl.addEventListener("click", () => performAttack());
+touchChestEl.addEventListener("click", () => performToggleChest());
+touchBeaconEl.addEventListener("click", () => performToggleBeacon());
 
 function sendInputFromKeys(): void {
   if (!localAlive) {
     client.sendInput(0, 0);
     return;
   }
-  let dx = 0;
-  let dy = 0;
+  let dx = touchMove.dx;
+  let dy = touchMove.dy;
   if (keys.has("w") || keys.has("arrowup")) dy -= 1;
   if (keys.has("s") || keys.has("arrowdown")) dy += 1;
   if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
   if (keys.has("d") || keys.has("arrowright")) dx += 1;
+  dx = Math.max(-1, Math.min(1, dx));
+  dy = Math.max(-1, Math.min(1, dy));
   if (dx !== 0 || dy !== 0) facing = { dx, dy };
   client.sendInput(dx, dy);
 }
@@ -664,22 +853,55 @@ function frame(): void {
   sendInputFromKeys();
 
   if (world) {
+    const renderT = renderTimeFor(performance.now(), RENDER_DELAY_MS);
     const zone = localZone === "overworld" ? world : world.dungeon;
+    // Remote players/enemies are drawn at an interpolated position (see
+    // interpolation.ts) — this only affects what's drawn; nearestInteractable/
+    // nearestAttackableEnemy/etc. below still use the raw, server-authoritative
+    // positions in `remotePlayers`/`enemies`, so range checks never drift from
+    // what the server will actually validate.
     const players: RenderPlayer[] = [...remotePlayers.entries()]
       .filter(([, p]) => p.zone === localZone)
-      .map(([id, p]) => ({
-        id,
-        x: p.x,
-        y: p.y,
-        isLocal: id === localPlayerId,
-        alive: p.alive,
-      }));
+      .map(([id, p]) => {
+        const isLocal = id === localPlayerId;
+        const drawn = isLocal ? { x: p.x, y: p.y } : (remotePlayerBuffers.get(id)?.sample(renderT) ?? { x: p.x, y: p.y });
+        return { id, x: drawn.x, y: drawn.y, isLocal, alive: p.alive };
+      });
     const zoneBuildings = localZone === "overworld" ? [...buildings.values()] : [];
-    const zoneEnemies: RenderEnemy[] = enemies.filter((e) => e.zone === localZone);
+    const zoneEnemies: RenderEnemy[] = enemies
+      .filter((e) => e.zone === localZone)
+      .map((e) => {
+        const drawn = enemyBuffers.get(e.id)?.sample(renderT) ?? { x: e.x, y: e.y };
+        return { ...e, x: drawn.x, y: drawn.y };
+      });
 
-    render(ctx, zone, players, zoneBuildings, zoneEnemies, localPos, { width: canvas.width, height: canvas.height }, isNight);
-
+    // Same targeting logic the E/Space/C handlers use (nearestInteractable,
+    // nearestZoneTransition, nearestAttackableEnemy, nearestChest) — drawn as
+    // rings so a player sees what a key press will affect before pressing it.
+    const highlights: Array<{ x: number; y: number; color: string }> = [];
     const gatherTarget = nearestInteractable();
+    if (gatherTarget) highlights.push({ x: gatherTarget.x + 0.5, y: gatherTarget.y + 0.5, color: "#ffd84a" });
+    const zoneTarget = !gatherTarget ? nearestZoneTransition() : null;
+    if (zoneTarget) highlights.push({ x: zoneTarget.x + 0.5, y: zoneTarget.y + 0.5, color: "#c9a7ff" });
+    const attackTarget = nearestAttackableEnemy();
+    if (attackTarget) highlights.push({ x: attackTarget.x, y: attackTarget.y, color: "#ff5a5a" });
+    const chestTarget = nearestChest();
+    if (chestTarget) highlights.push({ x: chestTarget.x + 0.5, y: chestTarget.y + 0.5, color: "#4ac6ff" });
+    const farmTarget = nearestFarmPlot();
+    if (farmTarget) highlights.push({ x: farmTarget.x + 0.5, y: farmTarget.y + 0.5, color: "#8a6a3a" });
+
+    render(
+      ctx,
+      zone,
+      players,
+      zoneBuildings,
+      zoneEnemies,
+      localPos,
+      { width: canvas.width, height: canvas.height },
+      isNight,
+      highlights,
+    );
+
     promptEl.textContent = "press E to gather";
     promptEl.style.display = gatherTarget ? "block" : "none";
     renderZonePrompt();

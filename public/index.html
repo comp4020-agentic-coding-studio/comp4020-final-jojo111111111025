@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Last Shelter</title>
     <style>
+      /* How much clear space the bottom-anchored HUD elements (action
+         prompts, the crafting panel, the health bar) leave above the
+         screen edge, so the touch joystick/action buttons never sit under
+         them. 0 on desktop; raised for a coarse (touch) pointer below. */
+      :root {
+        --bottom-safe: 0px;
+      }
+      @media (pointer: coarse) {
+        :root {
+          --bottom-safe: 160px;
+        }
+      }
       html, body {
         margin: 0;
         height: 100%;
@@ -29,11 +41,24 @@
         top: 8px;
         left: 8px;
         display: flex;
-        gap: 12px;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        max-width: calc(100vw - 16px);
         background: rgba(0, 0, 0, 0.5);
         padding: 6px 10px;
         border-radius: 6px;
         font-size: 14px;
+      }
+      /* At a phone width the un-shrunk HUD (9 resource counters) doesn't
+         fit on one line even wrapped at 14px; shrinking the font keeps it
+         to two short rows instead of running under the status/roster
+         panels above the canvas. */
+      @media (max-width: 480px) {
+        #hud {
+          font-size: 11px;
+          gap: 4px 6px;
+          padding: 4px 6px;
+        }
       }
       #status {
         position: absolute;
@@ -46,7 +71,7 @@
       }
       #prompt {
         position: absolute;
-        bottom: 16px;
+        bottom: calc(16px + var(--bottom-safe));
         left: 50%;
         transform: translateX(-50%);
         background: rgba(0, 0, 0, 0.6);
@@ -57,7 +82,7 @@
       }
       #farm-prompt {
         position: absolute;
-        bottom: 44px;
+        bottom: calc(44px + var(--bottom-safe));
         left: 50%;
         transform: translateX(-50%);
         background: rgba(0, 0, 0, 0.6);
@@ -74,15 +99,31 @@
       }
       #craft-panel {
         position: absolute;
-        bottom: 8px;
+        bottom: calc(8px + var(--bottom-safe));
         right: 8px;
         width: 240px;
-        max-height: 60vh;
+        max-width: calc(100vw - 16px);
+        max-height: 40vh;
         overflow-y: auto;
         background: rgba(0, 0, 0, 0.6);
         border-radius: 6px;
         padding: 8px;
         font-size: 12px;
+      }
+      /* Below this width #health-bar (left, 180px) and #craft-panel
+         (right, 240px) overlap if both stay anchored to their own corner
+         at full width — stack them instead: health bar on top, full width,
+         crafting panel below it, still right-anchored but narrower. */
+      @media (max-width: 460px) {
+        #health-bar {
+          left: 8px;
+          right: 8px;
+          width: auto;
+        }
+        #craft-panel {
+          width: calc(100vw - 16px);
+          bottom: calc(76px + var(--bottom-safe));
+        }
       }
       #craft-panel h2 {
         margin: 0 0 6px;
@@ -136,6 +177,8 @@
         border-radius: 8px;
         padding: 12px;
         width: 260px;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
         font-size: 13px;
         display: none;
       }
@@ -177,10 +220,39 @@
         border-radius: 10px;
         padding: 28px;
         width: 320px;
+        max-width: calc(100vw - 32px);
+        box-sizing: border-box;
       }
       #join-box h1 {
-        margin: 0 0 16px;
+        margin: 0 0 4px;
         font-size: 20px;
+      }
+      #join-box .goal {
+        margin: 0 0 14px;
+        font-size: 13px;
+        opacity: 0.8;
+        line-height: 1.4;
+      }
+      #join-box .controls-summary {
+        margin: 0 0 16px;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      #join-box .controls-summary .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      #join-box .controls-summary kbd {
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 3px;
+        padding: 1px 6px;
+        font-family: inherit;
+        font-size: 11px;
+        white-space: nowrap;
       }
       #join-box label {
         display: block;
@@ -232,7 +304,7 @@
       }
       #health-bar {
         position: absolute;
-        bottom: 8px;
+        bottom: calc(8px + var(--bottom-safe));
         left: 8px;
         width: 180px;
         background: rgba(0, 0, 0, 0.5);
@@ -294,7 +366,7 @@
       }
       #combat-feedback {
         position: absolute;
-        bottom: 60px;
+        bottom: calc(60px + var(--bottom-safe));
         left: 50%;
         transform: translateX(-50%);
         background: rgba(0, 0, 0, 0.6);
@@ -306,7 +378,7 @@
       }
       #zone-prompt {
         position: absolute;
-        bottom: 80px;
+        bottom: calc(80px + var(--bottom-safe));
         left: 50%;
         transform: translateX(-50%);
         background: rgba(0, 0, 0, 0.6);
@@ -314,6 +386,26 @@
         border-radius: 6px;
         font-size: 13px;
         display: none;
+      }
+      #action-feedback {
+        position: absolute;
+        top: 76px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.65);
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+        min-height: 16px;
+        opacity: 0;
+        transition: opacity 0.15s;
+        pointer-events: none;
+      }
+      #action-feedback.show {
+        opacity: 1;
+      }
+      #action-feedback.err {
+        background: rgba(120, 20, 20, 0.75);
       }
       #beacon-panel {
         position: absolute;
@@ -324,6 +416,8 @@
         border-radius: 8px;
         padding: 14px;
         width: 280px;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
         font-size: 13px;
         display: none;
       }
@@ -376,6 +470,63 @@
         margin-top: 10px;
         background: #444 !important;
       }
+      /* Touch controls: hidden by default, shown only for coarse-pointer
+         (touch) devices via the (pointer: coarse) media query below, so a
+         mouse/keyboard desktop session never sees them. */
+      #touch-controls {
+        display: none;
+      }
+      @media (pointer: coarse) {
+        #touch-controls {
+          display: block;
+        }
+      }
+      #touch-joystick {
+        position: absolute;
+        left: 20px;
+        bottom: 20px;
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        touch-action: none;
+      }
+      #touch-joystick-knob {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 48px;
+        height: 48px;
+        margin-left: -24px;
+        margin-top: -24px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.25);
+        pointer-events: none;
+      }
+      #touch-actions {
+        position: absolute;
+        right: 16px;
+        bottom: 20px;
+        display: grid;
+        grid-template-columns: repeat(2, 56px);
+        grid-template-rows: repeat(2, 56px);
+        gap: 10px;
+      }
+      #touch-actions button {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        touch-action: none;
+      }
+      #touch-actions button:active {
+        background: rgba(255, 255, 255, 0.25);
+      }
       #night-indicator {
         position: absolute;
         top: 44px;
@@ -385,6 +536,28 @@
         border-radius: 6px;
         font-size: 11px;
         display: none;
+      }
+      #controls-legend {
+        position: absolute;
+        top: 76px;
+        right: 8px;
+        background: rgba(0, 0, 0, 0.55);
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.6;
+        max-width: 220px;
+      }
+      #controls-legend .title {
+        font-weight: 600;
+        margin-bottom: 2px;
+        opacity: 0.9;
+      }
+      #controls-legend kbd {
+        background: rgba(255, 255, 255, 0.15);
+        border-radius: 3px;
+        padding: 0 5px;
+        font-family: inherit;
       }
       #victory-screen {
         position: fixed;
@@ -409,6 +582,18 @@
     <div id="join-screen">
       <div id="join-box">
         <h1>Last Shelter</h1>
+        <p class="goal">
+          Survive together: gather wood and stone, craft tools, farm food,
+          fight off the night, defeat the dungeon boss, and light the beacon
+          as a team to win.
+        </p>
+        <div class="controls-summary">
+          <div class="row"><span>Move</span><kbd>WASD</kbd> / <kbd>Arrow keys</kbd></div>
+          <div class="row"><span>Gather / interact</span><kbd>E</kbd></div>
+          <div class="row"><span>Attack nearest enemy</span><kbd>Space</kbd></div>
+          <div class="row"><span>Open nearest chest</span><kbd>C</kbd></div>
+          <div class="row"><span>Open beacon (in dungeon)</span><kbd>B</kbd></div>
+        </div>
         <label for="join-name">Name</label>
         <input id="join-name" type="text" maxlength="24" placeholder="Your name" />
         <label for="join-room-code">Room code</label>
@@ -434,10 +619,18 @@
       <div id="status">connecting…</div>
       <div id="night-indicator">🌙 night</div>
       <div id="roster-panel"></div>
+      <div id="controls-legend">
+        <div class="title">Controls</div>
+        <div><kbd>WASD</kbd>/<kbd>arrows</kbd> move</div>
+        <div><kbd>E</kbd> gather / interact</div>
+        <div><kbd>Space</kbd> attack</div>
+        <div><kbd>C</kbd> chest · <kbd>B</kbd> beacon</div>
+      </div>
       <div id="prompt">press E to gather</div>
       <div id="zone-prompt"></div>
       <div id="farm-prompt"></div>
       <div id="combat-feedback"></div>
+      <div id="action-feedback"></div>
       <div id="health-bar">
         <span>❤️ <span id="health-value">100</span>/100</span>
         <div class="track"><div class="fill" id="health-fill" style="width: 100%"></div></div>
@@ -462,6 +655,15 @@
         <div id="beacon-deposit-rows"></div>
         <button id="beacon-activate">Activate Beacon</button>
         <button id="beacon-close">Close (B)</button>
+      </div>
+      <div id="touch-controls">
+        <div id="touch-joystick"><div id="touch-joystick-knob"></div></div>
+        <div id="touch-actions">
+          <button id="touch-interact" aria-label="Gather / interact">E</button>
+          <button id="touch-attack" aria-label="Attack">⚔</button>
+          <button id="touch-chest" aria-label="Open chest">🧰</button>
+          <button id="touch-beacon" aria-label="Open beacon">🔥</button>
+        </div>
       </div>
     </div>
     <div id="death-screen">

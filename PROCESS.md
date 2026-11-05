@@ -141,3 +141,158 @@ matching the constraint noted in this repository's own prior crit-8
 history); it was last verified to build and deploy by `flyctl deploy
 --remote-only`, which this integration has not yet re-run, by design —
 deployment waits for explicit approval.
+
+## Post-integration usability pass
+
+After C10's integration landed, a separate staged pass addressed real
+usability gaps in the shipped game — a new first-time player had no stated
+goal or control legend, no feedback on why an action failed, movement for
+remote players/enemies looked choppy at the client's lower snapshot rate,
+and there was no mobile input or narrow-viewport layout at all. This was
+scoped explicitly as polish on the existing game, not new gameplay: no
+server message schema, movement/combat/gather validation, or win condition
+changed in any of the three stages below. None of this work has been
+committed yet — it sits as uncommitted changes in this working tree,
+pending review; nothing has been pushed or deployed.
+
+### Stage 1 — core usability
+
+A join-screen goal blurb and controls summary, plus a persistent in-game
+controls legend, were added to `public/index.html`. `src/client/main.ts`
+gained an exhaustive `ACTION_REASON_MESSAGES` map (every `reason` string
+`room.ts`/`net.ts` can emit) wired through one `showActionFeedback()` call,
+so a rejected action always surfaces a readable toast instead of silently
+doing nothing. The nearest-interactable/attackable/chest helpers `main.ts`
+already computed for E/Space/C behaviour are now also used to compute a
+highlight ring around whatever a key press would currently act on, drawn by
+a new optional `highlights` parameter on `render()`
+(`src/client/render.ts`). A `window.blur` handler clears all held keys, so
+switching tabs/windows mid-move no longer leaves a key "stuck" down. A new
+`InterpolationBuffer` class (`src/client/interpolation.ts`, pure, no DOM/
+network dependency) smooths remote players' and enemies' rendered position
+between the server's 10Hz snapshots; the local player and every server-side
+range/validation check still use raw authoritative positions, never
+interpolated ones. `spec/interpolation.spec.ts` adds 7 unit tests covering
+single-sample behaviour, interpolation, clamping at both ends, correct
+bracket-pair selection with 3+ samples, and history eviction.
+
+**Verification:** `pnpm typecheck` clean; `pnpm build:client` succeeds
+(43.8kb, up from 35.1kb pre-change); `pnpm test` — 211/211 passing across
+23 spec files (204 pre-existing + 7 new), 0 regressions. Every DOM id
+`main.ts` queries was cross-checked against the shipped `index.html`
+programmatically (`comm` on two sorted id lists) — no missing element.
+**Not independently re-verified by rendering a browser in this pass**
+(see below) — Stage 1's visual claims (ring placement, smoothness) rest on
+code reading and the automated tests, not a screenshot.
+
+### Stage 2 — mobile and responsive layout
+
+A touch joystick (`#touch-joystick`) and four action buttons
+(`#touch-actions`) were added to `public/index.html`, shown only under a
+`(pointer: coarse)` media query so a desktop mouse/keyboard session never
+sees them. The joystick and buttons use Pointer Events (not
+`touchstart`/`touchmove`), so the same code path also responds to a mouse
+for manual testing without real touch hardware. In `main.ts`, the four
+action buttons call the exact same `performInteract`/`performAttack`/
+`performToggleChest`/`performToggleBeacon` functions the keyboard handler
+calls — touch and keyboard can never diverge in what a given action does.
+Movement is summed, not overwritten: the joystick's `touchMove` and the
+keyboard's `keys` both feed `sendInputFromKeys()`, clamped to `[-1, 1]` the
+same way the server already clamps `setInput`, so a touch drag and a held
+key can coexist without fighting.
+
+Layout: a `--bottom-safe` CSS custom property (0 on desktop, 160px under
+`(pointer: coarse)`) raises every bottom-anchored prompt/panel clear of the
+joystick/buttons. `#hud` wraps and shrinks font at `≤480px` so its 9
+resource counters no longer run off the right edge. `#health-bar` and
+`#craft-panel` — which overlap by a computed 46px at 390px width when both
+stay anchored to their own corner at full size — stack vertically instead
+below `≤460px`. The join screen, chest panel, and beacon panel all got
+`max-width: calc(100vw - Npx)` safety margins so they can't overflow a
+390px-wide viewport.
+
+**Verification method and its limit, stated plainly:** this environment has
+no working browser (Playwright's Chromium needs `libnspr4`/`libnss3`,
+installing them needs `sudo apt-get`, and no password is available
+non-interactively here) and no `docker` binary, so none of Stage 2's
+layout claims were confirmed by actually rendering the page. What was
+checked instead:
+- `pnpm typecheck` clean, `pnpm build:client` succeeds (43.8kb), `pnpm test`
+  — 211/211 passing, 0 regressions.
+- Every DOM id `main.ts` queries (including the five new touch-control ids)
+  exists in the shipped `index.html` — checked programmatically, not by
+  eye.
+- Static CSS arithmetic against the two required viewports: at 390×844,
+  `--bottom-safe: 160px` pushes bottom-anchored panels' effective floor to
+  roughly y≈684, while the joystick (bottom:20px, 120px tall) and action
+  buttons (bottom:20px, 56px tall, in a 2×2 grid) occupy roughly y≈702–824
+  — no computed overlap between the two groups at that width. At 1920×1080
+  a mouse pointer is not `coarse`, so the touch controls stay `display:
+  none` and the pre-existing desktop layout (unchanged by this stage) is
+  what renders.
+- This is static analysis, not a pixel-level visual check. Real rendering
+  behaviour — font metrics, actual element box sizes, whether the two
+  groups genuinely don't overlap once the browser lays everything out —
+  has **not** been visually confirmed, and is not claimed as such.
+
+### Stage 3 — concurrency, reconnect, and persistence acceptance testing
+
+Tested with two independent HTTP cookie jars and `ws` WebSocket clients
+driving the real, already-running dev server (`localhost:8080`, real
+`node:http`/`WebSocketServer`, real SQLite file) — genuine network I/O and
+process state, no browser, no test-harness shortcuts, no mocked server.
+Each test script was written, run once against a freshly-started server,
+and then deleted — it isn't part of the repo, since the same scenarios are
+already covered by `spec/`'s own integration suite; what follows is this
+pass's own observed results, not a re-statement of `spec/`'s.
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| Two independent cookie jars get distinct identities | PASS | different `ls_id` cookies → different `playerId`s |
+| Both players appear in `room.roster` after independently joining | PASS | roster array contained both ids |
+| Real-time propagation: one player's movement reaches the other over the wire | PASS | `player.state` broadcast observed carrying the mover's id |
+| Concurrent gather race on a resource node with multiple units left | Both requests legitimately succeeded, draining the node 3→2→1 — **this is correct behaviour, not a bug**: a node with >1 remaining has no single-winner invariant to violate | `objectRemaining` decremented once per successful grant, no double-decrement, no crash |
+| Concurrent gather race on the **last** remaining unit (drained to 1 first, then both clients fired `player.interact` on it simultaneously) | PASS — exactly one request succeeded (`ok: true`), the other failed with `reason: "depleted"` | no double-grant of the same unit |
+| Reconnect within the grace window, same server process | PASS | same cookie → same `playerId` on `room.joined` |
+| A genuinely new cookie never collides with an existing identity | PASS | third client's `playerId` distinct from the first two |
+| Persistence across a **real** process kill (`kill -9`) + restart on the same DB file (confirmed by a new PID in `ps`) | **Identity: PASS. Inventory: PASS. Position: does not persist** | same `playerId` and byte-identical `inventory` object before/after; position reset to spawn (32.5, 33.5) rather than the pre-restart coordinate |
+
+**What "restart persistence" does and doesn't cover, precisely:** this
+pass's own `kill -9` + new-process test (table row above) checked identity
+and inventory only — it did not touch health or any broader world state
+(resource depletion, buildings, boss-defeated/beacon progress). Those are
+instead covered by `spec/`'s own automated suite
+(`spec/survival.spec.ts`'s health test, `spec/state-consistency.spec.ts`'s
+resource-depletion test, `spec/phase-d-integration.spec.ts`'s beacon/boss
+test) — but that suite's "restart" (`spec/helpers/server-harness.ts`)
+closes a DB handle and opens a new one with a new `Room` object **inside
+the same test process**, never a real OS-level process kill. So: identity
+and inventory have now been verified across a genuine OS-level restart;
+health and broader world state have only been verified across the
+automated suite's in-process-simulated restart, not yet across a genuine
+OS-level one. No test was added or changed in this pass to close that gap
+— extending the manual `kill -9` probe to also gather/take damage/deposit
+materials before killing the process is a straightforward follow-up, not
+something this review did.
+
+On the position-after-restart result: this is the same finding this
+project's own C8/C9 history already recorded for its prior concept, and it
+is not a regression against anything this README promises — the
+`## Persistence` section lists world seed/resource depletion, buildings,
+chests, farm timestamps, "each identity's inventory and health," and
+boss/beacon state; it does not list per-player position. Position lives
+only in the in-memory `Room` (survives a reconnect within the same process,
+as the grace-window test above confirms) and is not part of `world.ts`'s
+persisted schema. No code change was made to address this in this pass —
+it wasn't in Stage 3's brief, which was acceptance testing, not a fix for
+whatever that testing found; if persisted position becomes a requirement,
+that's a schema change for a future stage, not this one.
+
+**What this did not test:** an actually-deployed instance (this ran against
+localhost only, matching the explicit instruction not to deploy without
+approval), network-throttling / flaky-connection behaviour beyond what
+`spec/reconnect.spec.ts` already covers, health/world-state persistence
+across a genuine OS-level restart (see above — only identity/inventory got
+that level of test), and anything requiring a real rendered browser (two
+genuinely separate browser profiles, as a human reviewer would run
+manually) — all of this remains the reviewer's or a future stage's job.

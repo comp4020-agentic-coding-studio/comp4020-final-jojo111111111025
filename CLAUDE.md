@@ -71,3 +71,11 @@ this drift from what the code actually guarantees.
 - **Don't add features that aren't part of the current `README.md`.** A
   new mechanic, item, or win condition is a `README.md` (and likely ADR)
   decision first, not a quiet addition to `room.ts`.
+- **Touch and keyboard input must call the same client-side action
+  functions, never duplicate the logic.** `performInteract`/
+  `performAttack`/`performToggleChest`/`performToggleBeacon` in
+  `main.ts` are each called from both the keyboard handler and a touch
+  button; a new input method or action needs to share that one function,
+  not grow a second implementation that can drift from it. Movement is
+  summed (`touchMove` + `keys`, clamped to `[-1, 1]`), never one input
+  overwriting the other.
