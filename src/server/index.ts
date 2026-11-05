@@ -31,6 +31,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".map": "application/json",
+  ".png": "image/png",
 };
 
 const db = openDatabase(DB_PATH);

@@ -173,7 +173,7 @@ export function generateWorldMap(seed: string, width = MAP_WIDTH, height = MAP_H
 
 /**
  * The dungeon's own small, disjoint coordinate space (see DungeonMap's
- * doc-comment). A simple open rock chamber — there's no puzzle/maze content
+ * doc-comment). A simple open stone chamber — there's no puzzle/maze content
  * planned for this phase, just a bounded arena for the guardian enemies and
  * the boss guarding the beacon. Deterministic from the world seed, same as
  * the overworld.
@@ -182,13 +182,14 @@ function generateDungeon(): DungeonMap {
   const width = DUNGEON_WIDTH;
   const height = DUNGEON_HEIGHT;
   const tiles: MapTile[] = new Array(width * height);
-  for (let i = 0; i < tiles.length; i++) tiles[i] = { terrain: "rock" };
+  for (let i = 0; i < tiles.length; i++) tiles[i] = { terrain: "dungeon_wall" };
 
-  // Clear a walkable floor for the whole chamber except a 1-tile rock border,
-  // so the dungeon has solid walls on every edge.
+  // Clear a walkable floor for the whole chamber except a 1-tile wall
+  // border, so the dungeon has solid walls on every edge (dungeon_wall is in
+  // SOLID_TERRAIN; see types.ts).
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
-      tiles[y * width + x] = { terrain: "grass" };
+      tiles[y * width + x] = { terrain: "dungeon_floor" };
     }
   }
 

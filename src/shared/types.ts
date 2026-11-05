@@ -3,9 +3,16 @@ export interface Vec2 {
   y: number;
 }
 
-export type TerrainKind = "grass" | "forest" | "water" | "rock";
+/**
+ * `"dungeon_wall"` and `"dungeon_floor"` are distinct from the overworld's
+ * `"rock"`/`"grass"` (which the dungeon previously reused) so the dungeon
+ * can render with its own stone tileset and have a solid border without
+ * making overworld rock terrain impassable or overworld grass render with
+ * dungeon stone. See `generateDungeon()` in `map.ts`.
+ */
+export type TerrainKind = "grass" | "forest" | "water" | "rock" | "dungeon_wall" | "dungeon_floor";
 
-export const SOLID_TERRAIN: ReadonlySet<TerrainKind> = new Set(["water"]);
+export const SOLID_TERRAIN: ReadonlySet<TerrainKind> = new Set(["water", "dungeon_wall"]);
 
 export type ResourceKind = "wood" | "stone" | "berries";
 

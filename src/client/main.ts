@@ -13,9 +13,15 @@ import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
 import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
 import { GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
+import { loadSprites } from "./sprites.js";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
+// Pixel-art sprites must not be bilinear-smoothed — the canvas default would
+// blur every sprite at any non-integer scale. (Set in resize(), below,
+// since resizing the canvas's backing store resets all 2D context state
+// including this flag — a one-time set here would be lost on first resize.)
+void loadSprites(); // starts loading immediately; frame() tolerates not-yet-loaded sheets (see sprites.ts/render.ts's fallback colors)
 const statusEl = document.getElementById("status")!;
 const promptEl = document.getElementById("prompt")!;
 const zonePromptEl = document.getElementById("zone-prompt")!;
@@ -128,6 +134,9 @@ window.addEventListener("blur", () => keys.clear());
 function resize(): void {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  // Resizing the canvas's backing store resets all 2D context state,
+  // including imageSmoothingEnabled — reapply it every time, not just once.
+  ctx.imageSmoothingEnabled = false;
 }
 window.addEventListener("resize", resize);
 resize();

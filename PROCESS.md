@@ -296,3 +296,87 @@ across a genuine OS-level restart (see above — only identity/inventory got
 that level of test), and anything requiring a real rendered browser (two
 genuinely separate browser profiles, as a human reviewer would run
 manually) — all of this remains the reviewer's or a future stage's job.
+
+## Visual asset integration
+
+A separate research pass (asset packs downloaded and evaluated only in a
+`/tmp` staging area, never this repo, until each stage below was explicitly
+approved) replaced the game's flat-color placeholder rendering with real
+sprite art: ansimuz's Tiny RPG Forest and Mountain tilesets (CC0) for the
+overworld, and Calciumtrice's Dungeon Tileset (CC-BY 3.0) for the dungeon.
+Full license text and required attribution are in
+`public/assets/CREDITS.md`. Calciumtrice's character/monster sprites are
+single static poses with no walk/attack/hurt/death animation — this is a
+property of the source pack, confirmed by decoding the actual downloaded
+PNG pixels rather than assumed from its description, and is not something
+later stages invent frames to paper over.
+
+### Stage 1 — terrain rendering
+
+`src/client/sprites.ts` is new: it loads the three tileset PNGs once at
+startup and maps each `TerrainKind` to a source rect on one of them
+(`TERRAIN_SPRITES`), replacing `render.ts`'s old `TERRAIN_COLORS` hex-string
+lookup one-for-one in shape. `render.ts`'s tile-drawing loop now calls a new
+`drawTile()` helper that tries the sprite first and falls back to the old
+flat-color fill when there's no sprite for a terrain (today: `"water"`
+only — neither approved pack includes open water) or the sheet hasn't
+finished loading yet, so the map is never blank during the brief
+image-load window. `imageSmoothingEnabled = false` is set on the canvas
+context so pixel art isn't bilinear-blurred; since resizing the canvas's
+backing store resets all 2D context state, this is set from inside
+`resize()` itself, not just once at startup, or it would silently revert on
+the first window resize.
+
+A real pre-existing bug was found and fixed while doing this, not
+introduced by it: `SOLID_TERRAIN` only ever listed `"water"`, so a player
+could walk straight through the dungeon's rock-terrain border — only the
+array-bounds check stopped them, not the wall tiles themselves. Reproduced
+first with a standalone scratch script (deleted after use, not committed)
+driving `Room.tick` directly, confirming a player's x-position passed from
+1.5 down to 0.3 — through the wall — before any fix. The fix doesn't touch
+`SOLID_TERRAIN`'s existing `"rock"` entry (overworld mountain-biome terrain,
+which also hosts stone resource nodes and must stay walkable — confirmed by
+reading `terrainFor()`'s elevation thresholds and `spec/map.spec.ts`'s own
+regression test for rock-terrain reachability before touching anything).
+Instead, the dungeon's own border and floor got two new, dungeon-specific
+terrain kinds — `"dungeon_wall"` (added to `SOLID_TERRAIN`) and
+`"dungeon_floor"` — so the dungeon can have its own solid walls and its own
+stone-tileset rendering without changing what `"rock"`/`"grass"` mean
+anywhere in the overworld. `spec/dungeon-terrain.spec.ts` is a new
+regression test: it confirms the terrain kinds' solidity directly, confirms
+`generateWorldMap()`'s real dungeon generator places them correctly, and
+drives a player into the border through the real `Room.tick` path (the same
+scenario the scratch repro used) to confirm the fix holds end-to-end, not
+just at the data level. `spec/sprites.spec.ts` checks the sprite
+manifest's own data shape (every rect has sane dimensions, every solid
+dungeon terrain has a sprite, `"water"`'s missing sprite is intentional) —
+it cannot exercise actual image loading, since that needs a real browser
+and jsdom has no image decoder.
+
+One static-file-serving gap was also fixed: `src/server/index.ts`'s
+`CONTENT_TYPES` map had no `.png` entry, so any image placed in `public/`
+would have been served as `application/octet-stream` — harmless for how
+`<img>`/canvas loading actually behaves, but wrong, and now fixed.
+
+**Verification:** `pnpm typecheck` and `pnpm build:client` both clean.
+`pnpm test` — 220/220 passing across 25 spec files (211 from before this
+stage + 9 new: 4 in `spec/dungeon-terrain.spec.ts`, 5 in
+`spec/sprites.spec.ts`), 0 regressions. `pnpm check:evidence` passes.
+Checked by hand: the server was started against a fresh DB and
+`curl -I http://localhost:8080/assets/{forest,mountain,dungeon}/tileset.png`
+confirmed all three assets serve `200` with `Content-Type: image/png`; the
+built `public/main.js` was grepped to confirm it actually references
+`/assets/*/tileset.png`, not just that the source file does. The exact
+sprite-sheet pixel coordinates `sprites.ts` uses were re-cropped from the
+files as committed (not from the original research download) and visually
+confirmed to be the intended clean grass/dirt/rock/floor/wall tiles, not
+guessed from a thumbnail.
+
+**Not yet verified — stated plainly:** no real browser is available in this
+environment (same constraint noted in this repository's earlier usability
+pass), so the actual rendered pixel output — whether `drawImage`'s bottom-
+anchor math looks right, whether the forest/dungeon tiles read as coherent
+once laid out across the full map rather than as isolated 16×16 crops —
+has not been visually confirmed. Everything above is static/data-level
+verification (coordinates, dimensions, test assertions, HTTP responses),
+not a screenshot.

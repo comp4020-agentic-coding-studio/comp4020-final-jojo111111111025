@@ -1,11 +1,17 @@
 import { TILE_SIZE } from "../shared/constants.js";
 import type { Building, MapObject, MapTile } from "../shared/types.js";
+import { getImage, TERRAIN_SPRITES } from "./sprites.js";
 
+/** Fallback for a terrain kind with no sprite (today: only "water" — neither
+ * approved pack includes open water) and for any tile drawn before its
+ * sheet has finished loading. */
 const TERRAIN_COLORS: Record<string, string> = {
   grass: "#4a7c3c",
   forest: "#2e5a2a",
   water: "#2a5a8c",
   rock: "#6b6b6b",
+  dungeon_wall: "#4a4654",
+  dungeon_floor: "#c9c5cf",
 };
 
 const OBJECT_COLORS: Record<string, string> = {
@@ -85,13 +91,7 @@ export function render(
     for (let col = startCol; col < endCol; col++) {
       const tile = zone.tiles[row * zone.width + col];
       if (!tile) continue;
-      ctx.fillStyle = TERRAIN_COLORS[tile.terrain] ?? "#000";
-      ctx.fillRect(
-        Math.round(col * TILE_SIZE - originX),
-        Math.round(row * TILE_SIZE - originY),
-        TILE_SIZE,
-        TILE_SIZE,
-      );
+      drawTile(ctx, tile.terrain, Math.round(col * TILE_SIZE - originX), Math.round(row * TILE_SIZE - originY));
     }
   }
 
@@ -136,6 +136,30 @@ export function render(
     ctx.fillStyle = "rgba(10, 12, 40, 0.45)";
     ctx.fillRect(0, 0, viewport.width, viewport.height);
   }
+}
+
+/**
+ * Draws one terrain tile at the given destination pixel position. Tries the
+ * sprite sheet first (TERRAIN_SPRITES); falls back to a flat TERRAIN_COLORS
+ * fill when there's no sprite for this terrain (today: "water" only) or the
+ * sheet hasn't finished loading yet, so the map is never blank while
+ * sprites load. Walls (dungeon_wall) are 16x32 — taller than the 16x16
+ * floor grid — so they're bottom-anchored to the tile's bottom edge, which
+ * makes a wall tile correctly paint over the floor tile directly above it
+ * (walls read as "standing up" out of the floor, not floating above it).
+ * Stage 3's character/enemy sprites will need the same kind of anchor
+ * handling once they're taller than one tile too.
+ */
+function drawTile(ctx: CanvasRenderingContext2D, terrain: string, x: number, y: number): void {
+  const rect = TERRAIN_SPRITES[terrain as keyof typeof TERRAIN_SPRITES];
+  const img = rect && getImage(rect);
+  if (rect && img) {
+    const destY = y - (rect.h - TILE_SIZE); // bottom-anchor sprites taller than one tile
+    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, x, destY, rect.w, rect.h);
+    return;
+  }
+  ctx.fillStyle = TERRAIN_COLORS[terrain] ?? "#000";
+  ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
 }
 
 function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, originX: number, originY: number): void {

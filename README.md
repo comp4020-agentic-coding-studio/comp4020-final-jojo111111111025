@@ -80,6 +80,12 @@ pnpm test
   building, farming, combat, day/night, dungeon zoning, beacon victory,
   reconnect, room limits, and cross-room isolation.
 
+## Art
+
+The overworld uses ansimuz's Tiny RPG Forest and Mountain tilesets (CC0); the
+dungeon uses Calciumtrice's Dungeon Tileset (CC-BY 3.0). Full credits and
+license text are in [`public/assets/CREDITS.md`](public/assets/CREDITS.md).
+
 ## Persistence
 
 Everything survives a restart: the world seed and resource depletion,
