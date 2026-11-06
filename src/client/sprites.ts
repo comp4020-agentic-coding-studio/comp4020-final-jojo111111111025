@@ -11,7 +11,7 @@
  * low-variance (flat-colour) 16x16 regions, then confirmed by visual crop,
  * not guessed from the sheet's thumbnail.
  */
-import type { TerrainKind } from "../shared/types.js";
+import type { ObjectKind, TerrainKind } from "../shared/types.js";
 
 export interface SpriteRect {
   sheet: "forest" | "mountain" | "dungeon";
@@ -49,6 +49,41 @@ export const TERRAIN_SPRITES: Partial<Record<TerrainKind, SpriteRect>> = {
   // CREDITS.md. render.ts's drawTile bottom-anchors it to compensate.
   dungeon_floor: { sheet: "dungeon", x: 16, y: 144, w: 16, h: 16 },
   dungeon_wall: { sheet: "dungeon", x: 16, y: 64, w: 16, h: 32 },
+};
+
+/**
+ * One sprite per ObjectKind that has a genuinely identifiable match in the
+ * approved packs — not one per kind. `tree`, `rock`, and `bush` are
+ * deliberately absent: the forest sheet paints its canopy as one continuous
+ * overlapping mass (every 16px slice of it is a near-identical repeating
+ * edge pattern, confirmed by decoding and visually comparing adjacent
+ * slices, not assumed), with no discrete single-tree shape anywhere in it.
+ * The only "boulder" art in the mountain sheet sits on an opaque cave-floor
+ * background — part of an interior scene, not a droppable prop — and its
+ * cliff-face tiles are diagonal terrain-autotile pieces, not a freestanding
+ * rock. The pack's one isolated small plant sprite is a rose/flower, not a
+ * bush, and would misrepresent what it depicts if relabelled. render.ts's
+ * OBJECT_COLORS fallback (unchanged) is what draws these three; see
+ * PROCESS.md's Stage 2 section for the full per-kind reasoning.
+ */
+export const OBJECT_SPRITES: Partial<Record<ObjectKind, SpriteRect>> = {
+  // Calciumtrice dungeon tileset, "FIRE 16x6" section: an isolated
+  // flame-on-transparent sprite.
+  campfire: { sheet: "dungeon", x: 240, y: 512, w: 16, h: 16 },
+  // Calciumtrice dungeon tileset, "ALTARS" section: a statue on a stone
+  // pedestal. Taller than one tile grid cell (32px, 2 tile-rows), like
+  // dungeon_wall — render.ts's drawObject bottom-anchors it the same way.
+  ancient_beacon: { sheet: "dungeon", x: 304, y: 304, w: 16, h: 32 },
+  // Calciumtrice dungeon tileset, "DOORS+FENCES 16x32" section: one panel
+  // of a wooden double-door, with its handle — a single 16-wide slice of a
+  // wider 4-tile door art, chosen (over the full width) because every
+  // MapObject occupies exactly one tile cell, same as dungeon_wall/floor.
+  // Taller than one row (32px) like dungeon_wall — bottom-anchored the
+  // same way.
+  dungeon_entrance: { sheet: "dungeon", x: 16, y: 176, w: 16, h: 32 },
+  // Calciumtrice dungeon tileset, "FLOOR STAIRS 32x32" section: a stone
+  // staircase, taller than one tile (32px) like dungeon_wall/ancient_beacon.
+  dungeon_exit: { sheet: "dungeon", x: 0, y: 240, w: 16, h: 32 },
 };
 
 const images = new Map<string, HTMLImageElement>();

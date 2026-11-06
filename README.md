@@ -85,6 +85,10 @@ pnpm test
 The overworld uses ansimuz's Tiny RPG Forest and Mountain tilesets (CC0); the
 dungeon uses Calciumtrice's Dungeon Tileset (CC-BY 3.0). Full credits and
 license text are in [`public/assets/CREDITS.md`](public/assets/CREDITS.md).
+Terrain and most objects (campfires, the ancient beacon, dungeon
+entrances/exits) are sprited; trees, rocks, and bushes render as flat
+colour, since neither pack contains a standalone sprite for them — see
+`PROCESS.md`'s Stage 2 section for why.
 
 ## Persistence
 

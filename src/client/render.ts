@@ -1,6 +1,6 @@
 import { TILE_SIZE } from "../shared/constants.js";
 import type { Building, MapObject, MapTile } from "../shared/types.js";
-import { getImage, TERRAIN_SPRITES } from "./sprites.js";
+import { getImage, OBJECT_SPRITES, TERRAIN_SPRITES } from "./sprites.js";
 
 /** Fallback for a terrain kind with no sprite (today: only "water" — neither
  * approved pack includes open water) and for any tile drawn before its
@@ -14,6 +14,9 @@ const TERRAIN_COLORS: Record<string, string> = {
   dungeon_floor: "#c9c5cf",
 };
 
+/** Fallback for an ObjectKind with no sprite (tree/rock/bush — see
+ * OBJECT_SPRITES's doc-comment for why) and for any object drawn before its
+ * sheet has finished loading. */
 const OBJECT_COLORS: Record<string, string> = {
   tree: "#1f3d1a",
   rock: "#8a8a8a",
@@ -162,12 +165,33 @@ function drawTile(ctx: CanvasRenderingContext2D, terrain: string, x: number, y: 
   ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
 }
 
+/**
+ * Draws one map object (tree, campfire, dungeon entrance, ...). Tries
+ * OBJECT_SPRITES first, same sprite-then-fallback pattern drawTile() uses
+ * for terrain; falls back to a flat OBJECT_COLORS square when this kind has
+ * no sprite (tree/rock/bush — see OBJECT_SPRITES's doc-comment) or the
+ * sheet hasn't loaded yet. A sprite taller than one tile (campfire's
+ * neighbours ancient_beacon/dungeon_entrance/dungeon_exit are all 32px) is
+ * bottom-anchored like drawTile()'s dungeon_wall, so it stands up out of
+ * its own cell rather than floating above it. Depleted-resource dimming
+ * applies the same way whether a sprite or the fallback colour is drawn.
+ */
 function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, originX: number, originY: number): void {
   const depleted = obj.resource ? obj.resource.remaining <= 0 : false;
-  ctx.fillStyle = OBJECT_COLORS[obj.kind] ?? "#fff";
   ctx.globalAlpha = depleted ? 0.25 : 1;
   const x = Math.round(obj.x * TILE_SIZE - originX);
   const y = Math.round(obj.y * TILE_SIZE - originY);
+
+  const rect = OBJECT_SPRITES[obj.kind];
+  const img = rect && getImage(rect);
+  if (rect && img) {
+    const destY = y - (rect.h - TILE_SIZE);
+    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, x, destY, rect.w, rect.h);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  ctx.fillStyle = OBJECT_COLORS[obj.kind] ?? "#fff";
   ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
   ctx.globalAlpha = 1;
 }

@@ -380,3 +380,116 @@ once laid out across the full map rather than as isolated 16×16 crops —
 has not been visually confirmed. Everything above is static/data-level
 verification (coordinates, dimensions, test assertions, HTTP responses),
 not a screenshot.
+
+### Stage 2 — environmental props
+
+Gave `drawObject()` the same sprite-then-fallback treatment Stage 1 gave
+`drawTile()`, for the seven `ObjectKind`s (`tree`, `rock`, `bush`,
+`campfire`, `dungeon_entrance`, `dungeon_exit`, `ancient_beacon`) — but only
+where the already-committed packs actually contain a genuinely identifiable
+match, not one sprite per kind regardless of fit. No new asset files and no
+new license obligations: every sprite below comes from the three PNGs
+Stage 1 already added, already covered by `public/assets/CREDITS.md`.
+
+**Inspection method, before any coordinate was chosen:** a scratch,
+never-committed pure-Node PNG decoder (zlib `inflateSync` + the standard
+PNG filter-byte unfiltering, no dependency) read each tileset's raw RGBA
+pixels directly — not a guess from a thumbnail. For every candidate region,
+alpha-channel bounding boxes were computed pixel-by-pixel to find exact
+sprite edges, then the crop was rendered back out as its own upscaled PNG
+(with a transparency checkerboard) and viewed before any coordinate was
+accepted. This caught real mistakes before they became code: an initial
+pass misread a 544×512 forest canopy mass as containing individual
+tree/bush sprites, until adjacent 16px-wide slices of it were cropped
+side-by-side and turned out to be a near-identical repeating edge pattern —
+terrain-style autotile art, not discrete objects. An initial altar-sprite
+height of 33px (from a looser bounding-box scan) was also caught and
+corrected to the true 32px by re-scanning alpha values row-by-row near the
+boundary.
+
+**What got a sprite, and why:**
+
+- `campfire` → Calciumtrice dungeon tileset's "FIRE 16×6" section, a single
+  16×16 flame frame on a transparent background. Unambiguous.
+- `ancient_beacon` → the same sheet's "ALTARS" section: a statue on a stone
+  pedestal, 16×32 (2 tile-rows), bottom-anchored like Stage 1's
+  `dungeon_wall`. Chosen over the pack's wider 2-tile altar variant because
+  every `MapObject` occupies one tile cell, and over the plain stone-block
+  pedestal-only tiles because the statue reads unambiguously as something
+  significant, which a flat pedestal wouldn't.
+- `dungeon_entrance` → the same sheet's "DOORS+FENCES" section: one 16×32
+  panel of a wooden double-door, complete with its handle, cropped from the
+  pack's wider 4-tile-wide door art down to the single tile width every
+  object actually occupies.
+- `dungeon_exit` → the same sheet's "FLOOR STAIRS" section: a 16×32 stone
+  staircase, visually and thematically distinct from the entrance's door
+  (stairs out, vs. a door in) rather than reusing the same shape for both.
+
+**What stayed on the existing flat-color fallback, and why — not a gap,
+a documented decision:**
+
+- `tree`: the ansimuz forest sheet paints its canopy as one continuous,
+  overlapping mass across a ~544×512 region. Verified directly: cropping
+  three adjacent 16px-wide vertical slices of it and viewing them
+  side-by-side showed a near-identical repeating leaf-edge pattern, the
+  signature of area-painted autotile art, not a discrete single-tree
+  shape. No standalone tree sprite with its own transparent-background
+  silhouette exists anywhere in either overworld sheet.
+- `rock`: the mountain sheet's one boulder-shaped sprite sits on a fully
+  opaque brown cave-floor background — confirmed by sampling its alpha
+  channel directly — meaning it's one element of a painted interior scene,
+  not a droppable prop with its own transparent silhouette. The sheet's
+  cliff-face tiles are diagonal terrain-edge autotile pieces (same
+  category as Stage 1's existing terrain use of this sheet), not a
+  freestanding rock shape either.
+- `bush`: the one cleanly isolated small plant sprite in either overworld
+  sheet is a rose/flower pair (forest sheet, ~16×12, transparent
+  background) — visually a flower, not a bush. Every other "bush-shaped"
+  region found during inspection turned out, on close crop, to be either
+  a fully-opaque dirt-patch ground tile with vegetation painted directly
+  into it (not usable as a separate overlay) or the same repeating
+  edge-autotile pattern found for `tree`. Labelling a flower sprite
+  `bush` would misrepresent what it depicts, which the brief for this
+  stage explicitly ruled out ("never force a sprite assignment just to
+  satisfy coverage").
+
+`src/client/sprites.ts`'s `OBJECT_SPRITES` doc-comment states this same
+reasoning next to the code, so a future reader doesn't need to rediscover
+it from this history.
+
+**Files changed:** `src/client/sprites.ts` (new `OBJECT_SPRITES` export,
+alongside Stage 1's `TERRAIN_SPRITES`), `src/client/render.ts`
+(`drawObject()` tries a sprite first, falls back to the existing
+`OBJECT_COLORS`, bottom-anchors anything taller than one tile the same way
+`drawTile()` already does), `spec/object-sprites.spec.ts` (new).
+`ObjectKind`, `SOLID_OBJECTS`, and every file under `src/server/` are
+untouched — this stage is rendering-only, same separation Stage 1 kept
+between terrain's visual sprite and `SOLID_TERRAIN`'s independent
+collision set.
+
+**Verification:** `pnpm typecheck` and `pnpm build:client` both clean.
+`pnpm test` — 225/225 passing across 26 spec files (220 from before this
+stage + 5 new in `spec/object-sprites.spec.ts`), 0 regressions. The built
+`public/main.js` was grepped to confirm all four sprited kinds
+(`ancient_beacon`, `campfire`, `dungeon_entrance`, `dungeon_exit`) are
+actually present in the shipped bundle, not just the source file.
+`node scripts/check-evidence.ts` passes. The dungeon tileset — the sheet
+every Stage 2 sprite draws from — was re-confirmed serving
+`200`/`image/png` from a locally-running instance, same check Stage 1 ran.
+
+**Not yet verified — stated plainly, same caveat as Stage 1:** no real
+browser is available in this environment, so none of this stage's actual
+rendered pixel output has been visually confirmed — not the bottom-anchor
+positioning of the three 32px-tall object sprites relative to the player
+and surrounding tiles, not foreground/background layering against moving
+players or enemies, not whether the chosen crops read correctly at actual
+in-game scale rather than in an isolated upscaled crop. Everything stated
+as "confirmed" or "verified" above is pixel-level data verification against
+the source PNGs (alpha-channel bounding boxes, rendered-and-viewed crops of
+the exact coordinates used) and automated test/build/HTTP checks — not a
+screenshot of the running game. This distinction matters more for Stage 2
+than Stage 1: Stage 1's sprites were ground-level tiles with little room for
+a wrong read, while Stage 2 introduces this integration's first
+taller-than-one-tile *object* sprites, where bottom-anchor math and
+draw-order relative to the player are exactly the kind of thing only an
+actual rendered frame can confirm.
