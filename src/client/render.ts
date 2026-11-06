@@ -1,6 +1,6 @@
 import { TILE_SIZE } from "../shared/constants.js";
 import type { Building, MapObject, MapTile } from "../shared/types.js";
-import { getImage, OBJECT_SPRITES, TERRAIN_SPRITES } from "./sprites.js";
+import { ENEMY_SPRITES, getImage, OBJECT_SPRITES, PLAYER_SPRITES, TERRAIN_SPRITES } from "./sprites.js";
 
 /** Fallback for a terrain kind with no sprite (today: only "water" — neither
  * approved pack includes open water) and for any tile drawn before its
@@ -122,14 +122,31 @@ export function render(
     ctx.stroke();
   }
 
+  // Every player draws as the same static PLAYER_SPRITES character — the
+  // pack has only one usable character art (see sprites.ts's doc-comment).
+  // Since that sprite carries no colour cue of its own, a small flattened
+  // "shadow" ellipse beneath the character's feet — drawPlayerMarker()'s
+  // sole job — restores the isLocal (yellow) vs. remote (blue) distinction
+  // the old plain-colour circles used to give for free, without touching
+  // the character art itself.
   for (const player of players) {
     const px = player.x * TILE_SIZE - originX;
     const py = player.y * TILE_SIZE - originY;
     ctx.globalAlpha = player.alive ? 1 : 0.3;
-    ctx.fillStyle = player.isLocal ? "#ffd84a" : "#4ac6ff";
-    ctx.beginPath();
-    ctx.arc(px, py, TILE_SIZE * 0.35, 0, Math.PI * 2);
-    ctx.fill();
+
+    const img = getImage(PLAYER_SPRITES);
+    if (img) {
+      const x = Math.round(px - PLAYER_SPRITES.w / 2);
+      const y = Math.round(py - TILE_SIZE / 2);
+      const destY = y - (PLAYER_SPRITES.h - TILE_SIZE);
+      ctx.drawImage(img, PLAYER_SPRITES.x, PLAYER_SPRITES.y, PLAYER_SPRITES.w, PLAYER_SPRITES.h, x, destY, PLAYER_SPRITES.w, PLAYER_SPRITES.h);
+    } else {
+      ctx.fillStyle = player.isLocal ? "#ffd84a" : "#4ac6ff";
+      ctx.beginPath();
+      ctx.arc(px, py, TILE_SIZE * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    drawPlayerMarker(ctx, player, px, py);
     ctx.globalAlpha = 1;
   }
 
@@ -141,6 +158,37 @@ export function render(
   }
 }
 
+/** Half-width/height, in pixels, of the small flattened identity marker
+ * drawPlayerMarker() draws under a player's feet — deliberately smaller
+ * than a full tile so it reads as a subtle ground marking, never obscuring
+ * the character above it or the terrain around it. */
+const PLAYER_MARKER_RADIUS_X = TILE_SIZE * 0.3;
+const PLAYER_MARKER_RADIUS_Y = TILE_SIZE * 0.12;
+
+/**
+ * Draws a small flattened ellipse ("shadow") centred on a player's feet
+ * (px, the same world-space foot position drawObject/drawEnemy anchor to),
+ * offset down by half a tile so it sits on the ground rather than over the
+ * character. Colour alone carries the isLocal/remote distinction — yellow
+ * for the local player, blue for everyone else — the same two colours the
+ * pre-sprite fallback circles used, so "which one is me" still reads the
+ * same way it always did. Drawn after the character (sprite or fallback)
+ * so it isn't itself hidden by anything just drawn for this player, but
+ * its low alpha and small size keep it from reading as a second object.
+ */
+export function drawPlayerMarker(ctx: CanvasRenderingContext2D, player: RenderPlayer, px: number, py: number): void {
+  // py + TILE_SIZE/2 is the bottom edge of the tile the character sprite is
+  // anchored into (its feet line); nudging a couple pixels further down
+  // keeps the marker visibly below the feet rather than sitting flush
+  // against the sprite's own bottom edge.
+  const markerY = py + TILE_SIZE / 2 + 2;
+  ctx.globalAlpha *= 0.6;
+  ctx.fillStyle = player.isLocal ? "#ffd84a" : "#4ac6ff";
+  ctx.beginPath();
+  ctx.ellipse(px, markerY, PLAYER_MARKER_RADIUS_X, PLAYER_MARKER_RADIUS_Y, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 /**
  * Draws one terrain tile at the given destination pixel position. Tries the
  * sprite sheet first (TERRAIN_SPRITES); falls back to a flat TERRAIN_COLORS
@@ -150,8 +198,8 @@ export function render(
  * floor grid — so they're bottom-anchored to the tile's bottom edge, which
  * makes a wall tile correctly paint over the floor tile directly above it
  * (walls read as "standing up" out of the floor, not floating above it).
- * Stage 3's character/enemy sprites will need the same kind of anchor
- * handling once they're taller than one tile too.
+ * drawObject/drawEnemy and the player-sprite code in render() all reuse this
+ * same bottom-anchor formula for their own taller-than-one-tile sprites.
  */
 function drawTile(ctx: CanvasRenderingContext2D, terrain: string, x: number, y: number): void {
   const rect = TERRAIN_SPRITES[terrain as keyof typeof TERRAIN_SPRITES];
@@ -196,15 +244,35 @@ function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, originX: numb
   ctx.globalAlpha = 1;
 }
 
+/**
+ * Draws one enemy. Tries ENEMY_SPRITES first, same sprite-then-fallback
+ * pattern as drawTile/drawObject; every EnemyKind has a sprite (unlike
+ * terrain/objects, there's no partial-coverage case here), so the
+ * ENEMY_COLORS fallback only fires before the sheet has finished loading,
+ * or for a kind value this client doesn't recognise. guardian/boss sprites
+ * are 32px tall (2 tile-rows) and bottom-anchored like
+ * dungeon_wall/ancient_beacon, so they stand up out of their own cell. The
+ * health bar and telegraph ring are positioned off the same radius/anchor
+ * math either way, so they land in the same place sprite or fallback.
+ */
 function drawEnemy(ctx: CanvasRenderingContext2D, enemy: RenderEnemy, originX: number, originY: number): void {
   const px = enemy.x * TILE_SIZE - originX;
   const py = enemy.y * TILE_SIZE - originY;
   const radius = enemy.kind === "boss" ? TILE_SIZE * 0.55 : TILE_SIZE * 0.3;
 
-  ctx.fillStyle = ENEMY_COLORS[enemy.kind] ?? "#e00";
-  ctx.beginPath();
-  ctx.arc(px, py, radius, 0, Math.PI * 2);
-  ctx.fill();
+  const rect = ENEMY_SPRITES[enemy.kind as keyof typeof ENEMY_SPRITES];
+  const img = rect && getImage(rect);
+  if (rect && img) {
+    const x = Math.round(px - rect.w / 2);
+    const y = Math.round(py - TILE_SIZE / 2);
+    const destY = y - (rect.h - TILE_SIZE);
+    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, x, destY, rect.w, rect.h);
+  } else {
+    ctx.fillStyle = ENEMY_COLORS[enemy.kind] ?? "#e00";
+    ctx.beginPath();
+    ctx.arc(px, py, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   if (enemy.telegraphing) {
     ctx.strokeStyle = "#fff";

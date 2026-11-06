@@ -88,7 +88,14 @@ license text are in [`public/assets/CREDITS.md`](public/assets/CREDITS.md).
 Terrain and most objects (campfires, the ancient beacon, dungeon
 entrances/exits) are sprited; trees, rocks, and bushes render as flat
 colour, since neither pack contains a standalone sprite for them — see
-`PROCESS.md`'s Stage 2 section for why.
+`PROCESS.md`'s Stage 2 section for why. The player and all three enemy
+kinds also use sprites from the dungeon tileset. These are single static
+poses with no walk/attack animation and no facing variation — a moving
+character doesn't visibly animate or turn. The local player is still told
+apart from everyone else the same way it always was — by colour — via a
+small yellow/blue marker on the ground beneath each player's feet, since
+the shared character sprite itself carries no colour of its own; see
+`PROCESS.md`'s Stage 3 section for the full reasoning.
 
 ## Persistence
 

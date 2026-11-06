@@ -11,7 +11,7 @@
  * low-variance (flat-colour) 16x16 regions, then confirmed by visual crop,
  * not guessed from the sheet's thumbnail.
  */
-import type { ObjectKind, TerrainKind } from "../shared/types.js";
+import type { EnemyKind, ObjectKind, TerrainKind } from "../shared/types.js";
 
 export interface SpriteRect {
   sheet: "forest" | "mountain" | "dungeon";
@@ -84,6 +84,51 @@ export const OBJECT_SPRITES: Partial<Record<ObjectKind, SpriteRect>> = {
   // Calciumtrice dungeon tileset, "FLOOR STAIRS 32x32" section: a stone
   // staircase, taller than one tile (32px) like dungeon_wall/ancient_beacon.
   dungeon_exit: { sheet: "dungeon", x: 0, y: 240, w: 16, h: 32 },
+};
+
+/**
+ * The single static player sprite. Named PLAYER_SPRITES (plural, to match
+ * ENEMY_SPRITES below) but holds one SpriteRect, not a map keyed by kind —
+ * there's no PlayerKind to key by, every player looks the same. There is
+ * exactly one because the pack's "CHARACTERS" section has 15 front-facing
+ * variants with no back/side/walk frames (confirmed by pixel-diffing every
+ * pair: differences are confined to held-weapon pixels, never pose or leg
+ * position), so there is no basis to pick more than one or to vary it by
+ * facing/movement. The character always faces the viewer, regardless of
+ * which way the player is actually moving — see PROCESS.md's Stage 3
+ * section.
+ */
+export const PLAYER_SPRITES: SpriteRect = {
+  sheet: "dungeon",
+  x: 0,
+  y: 416,
+  w: 16,
+  h: 32,
+};
+
+/**
+ * One static sprite per EnemyKind, chosen from the "MONSTERS" section by
+ * matching each kind's in-game role (see constants.ts's
+ * WANDERER_MAX_HEALTH/GUARDIAN_MAX_HEALTH/BOSS_MAX_HEALTH) to the sheet's
+ * three size tiers. Like PLAYER_SPRITES, every monster in this pack is a
+ * single static pose — the only near-duplicate pairs found during
+ * inspection (e.g. the two 32x32 ogre variants) differ solely in a held
+ * weapon, never a walk/attack frame — so there is no animation to select
+ * between, and no fallback is needed: every EnemyKind has a sprite.
+ */
+export const ENEMY_SPRITES: Record<EnemyKind, SpriteRect> = {
+  // "MONSTERS 16x16" section: a green slime, matched to wanderer's role as
+  // the weak, roaming trash mob.
+  wanderer: { sheet: "dungeon", x: 48, y: 464, w: 16, h: 16 },
+  // "MONSTERS 16x32" section: a leather-armoured orc/zombie, matched to
+  // guardian's role as the tougher, more armoured mid-tier threat. Taller
+  // than one tile grid cell (32px) — render.ts's drawEnemy bottom-anchors
+  // it the same way drawTile/drawObject already do.
+  guardian: { sheet: "dungeon", x: 208, y: 464, w: 16, h: 32 },
+  // "MONSTERS 32x32" section: an armed horned ogre, matched to boss's role
+  // as the single largest, most visually distinct threat guarding the
+  // beacon. 32px tall — bottom-anchored the same way.
+  boss: { sheet: "dungeon", x: 320, y: 464, w: 32, h: 32 },
 };
 
 const images = new Map<string, HTMLImageElement>();

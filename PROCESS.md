@@ -493,3 +493,141 @@ a wrong read, while Stage 2 introduces this integration's first
 taller-than-one-tile *object* sprites, where bottom-anchor math and
 draw-order relative to the player are exactly the kind of thing only an
 actual rendered frame can confirm.
+
+### Stage 3 — player and enemy sprites
+
+Gave the player and all three `EnemyKind`s (`wanderer`, `guardian`, `boss`)
+a real sprite, replacing their plain coloured circles, using the same
+sprite-then-fallback architecture Stages 1–2 already established. No new
+asset files: every sprite comes from `dungeon/tileset.png`'s "CHARACTERS"
+and "MONSTERS" sections, already covered by `public/assets/CREDITS.md`'s
+existing CC-BY 3.0 block (one license for the whole file, not scoped to
+specific regions — verified by re-reading that file's wording before
+assuming it still applied).
+
+**What got a sprite, with the exact verified coordinates:**
+
+- Player → the "CHARACTERS" section's gray-armoured, unarmed character,
+  `x=0, y=416, 16×32`.
+- `wanderer` → the "MONSTERS 16×16" section's green slime, `x=48, y=464,
+  16×16` — matched to its role as the weak, roaming trash mob
+  (`WANDERER_MAX_HEALTH` is the lowest of the three).
+- `guardian` → the "MONSTERS 16×32" section's leather-armoured orc/zombie,
+  `x=208, y=464, 16×32` — matched to its tougher, mid-tier role.
+- `boss` → the "MONSTERS 32×32" section's armed horned ogre, `x=320, y=464,
+  32×32` — the largest, most visually distinct sprite in the pack, matching
+  its role as the single beacon-guarding threat.
+
+All four coordinates were independently re-verified against the source PNG
+(alpha-channel bounding box per sprite, rendered as an upscaled
+checkerboard crop, visually confirmed) before being written into
+`sprites.ts` — not re-typed from a prior report without re-checking.
+
+**What stayed exactly as planned, with no code-level surprises:**
+
+- `ObjectKind`, `SOLID_OBJECTS`, `EnemyKind`'s three values, every file
+  under `src/server/`, and all combat/movement/collision calculations are
+  byte-for-byte untouched — confirmed by `git diff` showing zero changes
+  outside `src/client/sprites.ts`, `src/client/render.ts`, and the new spec
+  file. This stage is rendering-only, same separation Stages 1–2 kept.
+
+**One real visual regression, found during review and fixed before
+committing:** the previous player rendering used colour (`#ffd84a` yellow
+for the local player, `#4ac6ff` blue for everyone else) as the only visual
+cue for "which one is you." Switching every player to the same static
+sprite silently dropped that distinction — flagged during this stage's
+review rather than committed as-is. The fix, `drawPlayerMarker()` in
+`render.ts`, draws a small flattened ellipse ("shadow") on the ground just
+below each player's feet, filled with the same yellow/blue the old circles
+used, keyed off the same `RenderPlayer.isLocal` field the fallback-colour
+code already reads. The character sprite itself is completely unchanged —
+the marker is a separate, deliberately subtle shape (roughly a third of a
+tile wide, an eighth of a tile tall, drawn at 60% of the player's own
+alpha) drawn on the ground after the character, so it reads as a ground
+marking under the character rather than a second competing shape or
+anything that could be mistaken for a new game object. `RenderPlayer`'s
+field shape, `main.ts`'s data flow into it, and every other player-facing
+behaviour (movement, networking, controls) are untouched — this is a
+rendering-only fix to a rendering-only regression.
+
+**Known limitations — documented here, not silently accepted:**
+
+- **Every character/monster sprite is front-facing only.** The pack's
+  "CHARACTERS" section has 15 variants; pixel-diffing every pair confirmed
+  all 15 face the viewer, with no back/side art anywhere. A player moving
+  up, down, left, or right still renders facing forward.
+- **No walking, idle, attack, or death animation frames exist anywhere in
+  this pack**, for the player or any monster — confirmed directly by
+  pixel-diffing every visually-similar pair found during inspection (e.g.
+  the two 32×32 ogre variants, the two 16×32 hooded-figure variants): every
+  difference found was confined to a held-weapon region, never a pose or
+  limb change. `CREDITS.md`'s pre-existing claim ("single static pose...no
+  animation included") is independently confirmed at the pixel level by
+  this stage, not merely cited.
+- **Player and enemy sprites are therefore visually static** — a moving
+  character glides without any leg or limb motion, matching the
+  constraints above rather than a missed integration step.
+- **The local-vs-remote player colour cue is preserved**, via
+  `drawPlayerMarker()`'s small ground marker rather than the sprite itself
+  — see above. Not a gap; the one thing this stage's review did require a
+  code change for.
+- **The pre-existing fixed render order (terrain → objects → buildings →
+  enemies → highlights → players, no y-sort) remains completely
+  unresolved**, exactly as flagged during Stage 2's review. This stage does
+  not touch `render()`'s draw-order loop at all — confirmed by `git diff`
+  showing no changes to that function's structure, only to `drawEnemy()`'s
+  and the player loop's internals.
+- **Larger, more detailed sprites make this layering gap more noticeable,
+  not less.** The player is now a visually distinct 16×32 figure and the
+  boss a 32×32 ogre — both occupy real screen space a flat 16–35px-diameter
+  circle used to leave implicit. A player standing on the tile just above a
+  guardian or the boss will now visibly, obviously render in front of it
+  regardless of which one should be "in front" at that position — this was
+  true in principle with circles too, but a human reviewer is far more
+  likely to actually notice it with real character art. No renderer
+  refactor (a y-sort pass) was attempted this stage, per the approved
+  scope — this is a known, carried-forward limitation for a future stage
+  to address, not something this one silently worked around.
+
+**Files changed:** `src/client/sprites.ts` (new `PLAYER_SPRITES` and
+`ENEMY_SPRITES` exports, alongside Stages 1–2's `TERRAIN_SPRITES`/
+`OBJECT_SPRITES`), `src/client/render.ts` (the player-draw loop and
+`drawEnemy()` both try a sprite first, fall back to the pre-existing
+colour/circle code, bottom-anchor taller-than-one-tile sprites the same way
+`drawTile()`/`drawObject()` already do; the player loop also calls the new
+exported `drawPlayerMarker()` to restore the isLocal/remote colour cue),
+`spec/character-sprites.spec.ts` (new) and `spec/player-marker.spec.ts`
+(new — exercises `drawPlayerMarker()` directly against a minimal fake
+`CanvasRenderingContext2D`, asserting the yellow/blue colour split, the
+marker's below-the-feet position, its sub-tile size, and its reduced
+alpha). No change to `src/client/main.ts`, `RenderPlayer`/`RenderEnemy`'s
+field shape, `ObjectKind`, `SOLID_OBJECTS`, `EnemyKind`, or anything under
+`src/server/`.
+
+**Verification:** `pnpm typecheck` and `pnpm build:client` both clean.
+`pnpm test` passing, 0 regressions (exact count in the commit message).
+`node scripts/check-evidence.ts` passes. The built `public/main.js` was
+grepped to confirm the new sprite coordinates are present in the shipped
+bundle, not just the source file. `spec/player-marker.spec.ts`'s
+colour-assertion tests were sanity-checked by deliberately swapping the
+yellow/blue mapping in `drawPlayerMarker()` and confirming the suite
+actually fails (2 of 5 tests red), then reverting — not just written and
+trusted to be meaningful.
+
+**Not yet verified — stated plainly, same caveat as Stages 1–2:** no real
+browser is available in this environment, so none of this stage's actual
+rendered pixel output has been visually confirmed — not whether the player
+sprite's bottom-anchor position looks correct standing on actual terrain,
+not whether the three enemy sprites read clearly at real gameplay zoom
+alongside moving players, and most importantly, not how visually
+disruptive the known render-order/occlusion gap actually looks once real
+character art is on screen together. Everything stated as "confirmed" or
+"verified" above is pixel-level data verification against the source PNG
+(alpha-channel bounding boxes, rendered-and-viewed crops of the exact
+coordinates used) and automated test/build/HTTP/bundle checks — not a
+screenshot of the running game. This distinction matters most for this
+stage of the three: Stage 3 is the first time this integration has
+introduced sprites for entities that move and interact with each other in
+real time, where facing, layering, and animation (or their absence) are
+exactly the kind of thing only an actual rendered, interactive frame can
+confirm.
