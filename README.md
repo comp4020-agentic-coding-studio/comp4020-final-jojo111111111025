@@ -82,13 +82,18 @@ pnpm test
 
 ## Art
 
-The overworld uses ansimuz's Tiny RPG Forest and Mountain tilesets (CC0); the
-dungeon uses Calciumtrice's Dungeon Tileset (CC-BY 3.0). Full credits and
+The overworld uses ansimuz's Tiny RPG Forest and Mountain tilesets (CC0);
+the dungeon uses Calciumtrice's Dungeon Tileset (CC-BY 3.0); bushes use a
+sprite from ansimuz's separate Tiny RPG Town pack (CC0). Full credits and
 license text are in [`public/assets/CREDITS.md`](public/assets/CREDITS.md).
 Terrain and most objects (campfires, the ancient beacon, dungeon
-entrances/exits) are sprited; trees, rocks, and bushes render as flat
-colour, since neither pack contains a standalone sprite for them — see
-`PROCESS.md`'s Stage 2 section for why. The player and all three enemy
+entrances/exits, bushes) are sprited; water, trees, and the rock object
+render as flat colour — not because no candidate asset was ever found, but
+because every one found (including from the Tiny RPG Town pack) was
+rejected on a concrete ground: a scale mismatch 6-7x this game's existing
+objects for trees, a colour/style mismatch for the rock, and a repeating
+tiling artifact for water. See `PROCESS.md`'s Stage 2 and Stage 4 sections
+for the full per-asset reasoning. The player and all three enemy
 kinds also use sprites from the dungeon tileset. These are single static
 poses with no walk/attack animation and no facing variation — a moving
 character doesn't visibly animate or turn. The local player is still told

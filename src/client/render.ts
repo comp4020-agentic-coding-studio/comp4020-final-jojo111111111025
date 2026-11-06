@@ -217,14 +217,19 @@ function drawTile(ctx: CanvasRenderingContext2D, terrain: string, x: number, y: 
  * Draws one map object (tree, campfire, dungeon entrance, ...). Tries
  * OBJECT_SPRITES first, same sprite-then-fallback pattern drawTile() uses
  * for terrain; falls back to a flat OBJECT_COLORS square when this kind has
- * no sprite (tree/rock/bush — see OBJECT_SPRITES's doc-comment) or the
- * sheet hasn't loaded yet. A sprite taller than one tile (campfire's
- * neighbours ancient_beacon/dungeon_entrance/dungeon_exit are all 32px) is
+ * no sprite (tree/rock — see OBJECT_SPRITES's doc-comment) or the sheet
+ * hasn't loaded yet. A sprite taller than one tile (campfire's neighbours
+ * ancient_beacon/dungeon_entrance/dungeon_exit are all 32px) is
  * bottom-anchored like drawTile()'s dungeon_wall, so it stands up out of
- * its own cell rather than floating above it. Depleted-resource dimming
- * applies the same way whether a sprite or the fallback colour is drawn.
+ * its own cell rather than floating above it. A sprite wider than one tile
+ * (bush, from Stage 4's "Tiny RPG Town" pack, is 25px) is horizontally
+ * centred on the cell the same way — every sprite before it happened to be
+ * exactly TILE_SIZE wide, so this never came up until bush's width forced
+ * it: drawn at x unchanged, it would overflow past the cell's right edge
+ * rather than sit centred in it. Depleted-resource dimming applies the
+ * same way whether a sprite or the fallback colour is drawn.
  */
-function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, originX: number, originY: number): void {
+export function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, originX: number, originY: number): void {
   const depleted = obj.resource ? obj.resource.remaining <= 0 : false;
   ctx.globalAlpha = depleted ? 0.25 : 1;
   const x = Math.round(obj.x * TILE_SIZE - originX);
@@ -233,8 +238,9 @@ function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, originX: numb
   const rect = OBJECT_SPRITES[obj.kind];
   const img = rect && getImage(rect);
   if (rect && img) {
+    const destX = x - (rect.w - TILE_SIZE) / 2;
     const destY = y - (rect.h - TILE_SIZE);
-    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, x, destY, rect.w, rect.h);
+    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, destX, destY, rect.w, rect.h);
     ctx.globalAlpha = 1;
     return;
   }

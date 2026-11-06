@@ -6,7 +6,8 @@ import { SOLID_OBJECTS } from "../src/shared/types.js";
  * Pure data-shape checks for the object sprite manifest — same approach as
  * spec/sprites.spec.ts for TERRAIN_SPRITES: no DOM/Image loading (jsdom has
  * no image decoder), just the manifest's own shape and the deliberate
- * per-kind coverage decisions from Stage 2's asset inspection.
+ * per-kind coverage decisions from Stage 2's and Stage 4's asset
+ * inspections.
  */
 describe("OBJECT_SPRITES manifest", () => {
   it("every sprite rect has positive, non-negative-origin dimensions", () => {
@@ -18,33 +19,45 @@ describe("OBJECT_SPRITES manifest", () => {
     }
   });
 
-  it("has a sprite for the four kinds confirmed to have a genuine visual match", () => {
+  it("has a sprite for the five kinds confirmed to have a genuine visual match", () => {
     expect(OBJECT_SPRITES.campfire).toBeDefined();
     expect(OBJECT_SPRITES.ancient_beacon).toBeDefined();
     expect(OBJECT_SPRITES.dungeon_entrance).toBeDefined();
     expect(OBJECT_SPRITES.dungeon_exit).toBeDefined();
+    expect(OBJECT_SPRITES.bush).toBeDefined(); // added Stage 4 Phase B2
   });
 
-  it("documents tree, rock, and bush as having no sprite (render.ts's flat-colour fallback is intentional, not an oversight — see sprites.ts's doc-comment and PROCESS.md)", () => {
+  it("documents tree and rock as having no sprite (render.ts's flat-colour fallback is intentional, not an oversight — see sprites.ts's doc-comment and PROCESS.md)", () => {
     expect(OBJECT_SPRITES.tree).toBeUndefined();
     expect(OBJECT_SPRITES.rock).toBeUndefined();
-    expect(OBJECT_SPRITES.bush).toBeUndefined();
   });
 
-  it("every sprite taller than one tile grid cell (16px) is exactly 32px (2 tile-rows) — drawObject's bottom-anchor math assumes a whole-tile-multiple height", () => {
+  it("every sprite taller than one tile grid cell (16px) was either exactly 32px (every Stage 2 sprite) or, as of Stage 4's bush, some other height — drawObject's bottom-anchor formula (destY = y - (h - TILE_SIZE)) always lands a sprite's bottom edge on the cell's own bottom edge regardless of h, so this was never actually a constraint on h, just a coincidence of which sprites existed before bush", () => {
     for (const [kind, rect] of Object.entries(OBJECT_SPRITES)) {
+      if (kind === "bush") continue; // the one sprite that is tall but not 32px — expected, not a gap
       if (rect!.h > 16) expect(rect!.h, `${kind}'s sprite height`).toBe(32);
     }
+    expect(OBJECT_SPRITES.bush!.h).toBe(30);
   });
 
-  it("no sprite's kind was added to SOLID_OBJECTS or otherwise changes collision (Stage 2 is visual-only)", () => {
-    // This asserts the inverse of what Stage 1 checked for terrain: Stage 2
-    // must NOT touch SOLID_OBJECTS membership for any kind it draws a
-    // sprite for. A kind having a sprite says nothing about whether it's
-    // solid — that's room.ts's decision alone, unchanged by this stage.
+  it("bush matches the exact verified coordinates and source sheet from Stage 4's asset inspection", () => {
+    expect(OBJECT_SPRITES.bush).toEqual({ sheet: "tiny-rpg-town", x: 3, y: 1, w: 25, h: 30 });
+  });
+
+  it("bush is wider than one tile grid cell (16px) — drawObject's horizontal-centring math exists specifically for this sprite", () => {
+    expect(OBJECT_SPRITES.bush!.w).toBeGreaterThan(16);
+  });
+
+  it("no sprite's kind was added to SOLID_OBJECTS or otherwise changes collision (sprite-table stages are visual-only)", () => {
+    // This asserts the inverse of what Stage 1 checked for terrain: adding
+    // a sprite must NOT touch SOLID_OBJECTS membership for any kind it
+    // draws. A kind having a sprite says nothing about whether it's solid
+    // — that's room.ts's decision alone, unchanged by any sprite-table
+    // stage (Stage 2's four object sprites, or Stage 4's bush).
     expect(SOLID_OBJECTS.has("campfire")).toBe(true); // unchanged from before Stage 2
     expect(SOLID_OBJECTS.has("ancient_beacon")).toBe(true); // unchanged from before Stage 2
     expect(SOLID_OBJECTS.has("dungeon_entrance")).toBe(false); // unchanged from before Stage 2
     expect(SOLID_OBJECTS.has("dungeon_exit")).toBe(false); // unchanged from before Stage 2
+    expect(SOLID_OBJECTS.has("bush")).toBe(false); // unchanged from before Stage 4
   });
 });

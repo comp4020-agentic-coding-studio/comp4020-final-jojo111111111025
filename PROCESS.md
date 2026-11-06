@@ -631,3 +631,164 @@ introduced sprites for entities that move and interact with each other in
 real time, where facing, layering, and animation (or their absence) are
 exactly the kind of thing only an actual rendered, interactive frame can
 confirm.
+
+### Stage 4 — visual asset completion and consistency
+
+Researched filling four known flat-colour gaps (`water`, `tree`, `rock`
+object, `bush`) with a supplementary CC0 pack, in two phases: an
+inspection-only pass (Phase B1) before any asset entered the repo, then an
+integration pass (Phase B2) for whatever survived that inspection.
+
+**Phase B1 — asset research, nothing committed to the repo during this
+phase.** Downloaded ansimuz's "Tiny RPG Fantasy" (also listed as "Tiny RPG
+Town" — same pack, same author as this project's existing forest/mountain
+sheets) via itch.io's legitimate free-download flow (`$0.00`, the pack's
+own named-your-own-price tier), to a scratch directory outside this repo.
+License confirmed from three independent sources, not inferred from the
+author's name alone: itch.io's own structured "Asset license" metadata
+field (`Creative Commons Zero v1.0 Universal`), the pack's own bundled
+`public-license.pdf`, and the author's most recent direct reply to a
+licensing question in the page's comment thread (an older, inconsistent
+"CCBy 4" reply from years earlier was superseded by a later, explicit
+"CC0" reply to a follow-up question about that exact inconsistency — both
+replies read directly from the page, not summarised from memory).
+
+Every candidate was decoded and visually inspected the same way every
+sprite in this project has been — pixel-level bounding boxes, rendered
+crops, no trust placed in thumbnails or filenames:
+
+- **Water**: a river/pond scene exists in the pack's town tileset, with a
+  genuine transparent background. Tiled at this game's 16px grid, though,
+  its water-surface noise texture turned out to have a fixed ~10px repeat
+  period — not a multiple of 16 — so no 16px crop of it tiles seamlessly.
+  Tested three different crop offsets; the best one still produced a
+  clearly visible diamond-grid repeat pattern when tiled at a scale
+  approximating real gameplay zoom, confirmed by rendering the tiled
+  result and viewing it, not estimating from the source texture alone.
+  Scanned the rest of the free pack (town, cave, and both tech-lab
+  tilesets) for any separate, purpose-built tileable water swatch; none
+  exists. **Not used** — this didn't meet the bar for "no visible
+  breakage," and the brief for this stage was explicit that failing that
+  bar means stopping, not lowering the bar. `water` stays on its
+  pre-existing flat-colour fallback.
+- **Tree**: two genuinely standalone tree sprites exist (`tree-1.png`,
+  `tree-2.png`), each with a real transparent background — unlike anything
+  found in the originally-approved packs. But at their native resolution
+  they are ~113x119 and ~102x140 px — roughly 7x7 and 6x9 *tiles* at this
+  game's 16px grid, 6-7x larger than every other sprited object and the
+  player (all 16x32 or smaller). Rendering one at native size would make a
+  single tree many times larger than a building; shrinking it to fit the
+  game's existing scale would blur hand-placed pixel art rather than show
+  a genuine lower-resolution version of the same piece. **Not used** —
+  `tree` stays on its pre-existing flat-colour fallback, a deliberate
+  decision made after finding a real candidate and rejecting it on scale
+  grounds, not a case of no candidate existing.
+- **Rock** (the object, distinct from the already-sprited `rock` terrain):
+  one standalone rock-like sprite exists in the pack's town tileset, but
+  it reads as a warm beige/tan loaf-of-bread or dirt-clump shape, not a
+  rock, and clashes with this project's existing grey-toned rock terrain
+  (`TERRAIN_SPRITES.rock`, from the mountain sheet). **Not used** — same
+  "found a candidate, rejected it on a real, stated ground" category as
+  tree.
+- **Bush**: two genuinely standalone green bush/conifer sprites exist
+  (`bush-2.png`'s conifer shape chosen over `bush-1.png`/`bush-3.png`'s
+  fern/vine shapes for a rounder, more conventional bush silhouette),
+  unlike any candidate found in the originally-approved packs (which
+  turned out to be a flower, or ground-attached dirt patches). At 25x30 px
+  opaque bounding box (~1.6x1.9 tiles) its scale is close enough to this
+  game's existing object scale not to clash the way the tree candidates
+  did. **Used.**
+
+**Phase B2 — integration of the one surviving candidate (`bush`).**
+
+- `public/assets/tiny-rpg-town/bush-2.png` added — the original 30x32
+  canvas from the free pack's `Assets/Environments/Vegetation
+  props/bush-2.png`, copied byte-for-byte (MD5-verified identical to the
+  downloaded source) with no re-encoding or pre-cropping; `sprites.ts`
+  draws only this file's own opaque sub-region.
+- `src/client/sprites.ts`: `SpriteRect.sheet` gained a fourth value,
+  `"tiny-rpg-town"`; `OBJECT_SPRITES.bush` added at
+  `{ sheet: "tiny-rpg-town", x: 3, y: 1, w: 25, h: 30 }` — this is the
+  source file's own alpha-channel bounding box (found by scanning, not
+  guessed), not the full 30x32 canvas, so no transparent padding is drawn.
+- `src/client/render.ts`: `drawObject()` gained a horizontal-centring step
+  (`destX = x - (rect.w - TILE_SIZE) / 2`), the one rendering change this
+  stage made, because it was strictly necessary — bush is the first
+  object sprite wider than `TILE_SIZE` (25px vs. every prior object
+  sprite's exactly 16px), and without this, bush would render flush
+  against the cell's left edge and visibly overflow past its right edge
+  rather than sit centred in it (confirmed by simulating the pre-fix
+  formula directly — not assumed). The existing vertical bottom-anchor
+  formula was untouched; it already generalises to any height correctly
+  (a fact this stage's own test suite update now states explicitly,
+  correcting an earlier test that had over-stated it as "must be exactly
+  32px").
+- `spec/object-sprites.spec.ts` updated: the existing "has a sprite for
+  the four kinds" test became five; the existing "tree/rock/bush all
+  undefined" test dropped `bush`; a new exact-coordinate assertion and a
+  new "wider than one tile" assertion were added for `bush`; the
+  "every tall sprite is exactly 32px" test was corrected (not just
+  patched to pass) to state the real constraint — the bottom-anchor
+  formula works for any height, 32px was a coincidence of which sprites
+  existed before bush, not an actual requirement — with bush's real 30px
+  height asserted explicitly rather than excluded silently.
+- `spec/object-sprite-anchoring.spec.ts` (new): exercises `drawObject()`'s
+  sprite-drawing branch directly against a fake
+  `CanvasRenderingContext2D`, with `sprites.ts`'s `getImage` mocked to
+  return a truthy sentinel (the node test environment has no real `Image`
+  decoder, so this is the only way to make `drawObject` actually take its
+  `drawImage` branch under test, rather than silently fall through to the
+  flat-colour path untested). Asserts: bush's horizontal centring lands at
+  the exact expected offset; a tall sprite (`ancient_beacon`) still
+  bottom-anchors correctly; an exactly-`TILE_SIZE`-wide sprite
+  (`campfire`) gets no horizontal offset, confirming the new centring math
+  is a true no-op for every sprite that predates bush. Sanity-checked by
+  deliberately reverting the centring formula to `destX = x` and
+  confirming the first test goes red, then restoring it — the same
+  mutation-and-revert discipline every prior stage's new tests used.
+- `public/assets/CREDITS.md`: new section for ansimuz's "Tiny RPG Town",
+  documenting the source, the exact file and sub-region used, the
+  three-source license verification above, and — explicitly — which of
+  this same pack's other sprites (trees, the rock, the water scene) were
+  evaluated and rejected, and why, so a future reader doesn't have to
+  redo this research to find out those were considered and declined, not
+  missed.
+
+**Scale/placement verification without a browser.** This environment has
+no headless browser available: `npx playwright install` succeeds in
+downloading the Chromium binary, but launching it fails —
+`chrome-headless-shell: error while loading shared libraries: libnspr4.so:
+cannot open shared object file`, `libnss3.so`, `libnssutil3.so`, and
+`libasound.so.2` are all missing. Installing them requires root
+(`apt-get install`), and no passwordless `sudo` is available in this
+container — attempting a password prompt or any system-level install was
+out of this stage's approved scope, so this was not attempted. A
+filesystem-wide search also confirmed no existing copy of these libraries
+is present anywhere else on the machine to borrow instead. This is stated
+plainly rather than worked around or silently skipped: **no real browser
+screenshot of the running game exists for this stage.**
+
+As a substitute (explicitly not equivalent to a browser screenshot, and
+not claimed to be one), a scratch, dependency-free Python PNG
+decoder/compositor replicated `render()`'s and `drawObject()`'s exact
+pixel formulas — the same bottom-anchor and new horizontal-centring
+arithmetic the real TypeScript code uses, not approximated — against the
+actual committed asset files, to produce a composited frame showing bush
+next to the player sprite, the wanderer (slime) enemy sprite, and the
+campfire object sprite at their true relative scale. This confirmed: bush
+renders centred in its cell (no left/right overflow bias), bottom-anchors
+correctly (no floating), and sits in a visually coherent size class next
+to the player and the game's other already-approved small sprites —
+without claiming this is what the actual canvas-based renderer will
+produce pixel-for-pixel, since it is a separate reimplementation of the
+same formulas, not an execution of `render.ts` itself.
+
+**Gameplay invariance.** `git diff --stat -- src/shared/ src/server/
+src/client/main.ts src/client/net.ts` is empty — nothing under those paths
+changed. `ObjectKind`, `SOLID_OBJECTS`, movement, collision, combat, AI,
+and networking are untouched; `SOLID_OBJECTS.has("bush")` is asserted
+`false` (unchanged) in the updated test suite. This stage's one
+`render.ts` change (bush's horizontal centring) is additive to the
+existing sprite-drawing branch and has no effect on any sprite that was
+already exactly `TILE_SIZE` wide — confirmed by a dedicated test for
+exactly that case, not assumed from reading the diff alone.

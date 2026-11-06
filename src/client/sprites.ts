@@ -14,7 +14,7 @@
 import type { EnemyKind, ObjectKind, TerrainKind } from "../shared/types.js";
 
 export interface SpriteRect {
-  sheet: "forest" | "mountain" | "dungeon";
+  sheet: "forest" | "mountain" | "dungeon" | "tiny-rpg-town";
   x: number;
   y: number;
   w: number;
@@ -25,6 +25,7 @@ const SHEET_PATHS: Record<SpriteRect["sheet"], string> = {
   forest: "/assets/forest/tileset.png",
   mountain: "/assets/mountain/tileset.png",
   dungeon: "/assets/dungeon/tileset.png",
+  "tiny-rpg-town": "/assets/tiny-rpg-town/bush-2.png",
 };
 
 /**
@@ -52,19 +53,34 @@ export const TERRAIN_SPRITES: Partial<Record<TerrainKind, SpriteRect>> = {
 };
 
 /**
- * One sprite per ObjectKind that has a genuinely identifiable match in the
- * approved packs — not one per kind. `tree`, `rock`, and `bush` are
- * deliberately absent: the forest sheet paints its canopy as one continuous
- * overlapping mass (every 16px slice of it is a near-identical repeating
- * edge pattern, confirmed by decoding and visually comparing adjacent
- * slices, not assumed), with no discrete single-tree shape anywhere in it.
- * The only "boulder" art in the mountain sheet sits on an opaque cave-floor
- * background — part of an interior scene, not a droppable prop — and its
- * cliff-face tiles are diagonal terrain-autotile pieces, not a freestanding
- * rock. The pack's one isolated small plant sprite is a rose/flower, not a
- * bush, and would misrepresent what it depicts if relabelled. render.ts's
- * OBJECT_COLORS fallback (unchanged) is what draws these three; see
- * PROCESS.md's Stage 2 section for the full per-kind reasoning.
+ * One sprite per ObjectKind that has a genuinely identifiable match in an
+ * approved pack — not one per kind. `tree` and `rock` are deliberately
+ * absent — see each one's own reasoning below; `bush` is sprited as of
+ * Stage 4 Phase B2.
+ *
+ * `tree`: the forest sheet's own canopy is one continuous overlapping mass
+ * (every 16px slice of it is a near-identical repeating edge pattern, not
+ * a discrete tree shape). Stage 4 researched ansimuz's separate "Tiny RPG
+ * Town" pack (CC0 — see public/assets/CREDITS.md) as a supplement: it has
+ * two genuinely standalone tree sprites with real transparent backgrounds,
+ * but both are ~113x119 and ~102x140 px — roughly 7x7 and 6x9 *tiles* at
+ * this game's 16px grid, 6-7x larger than every other object/the player
+ * (all 16x32 or smaller). Using them at native resolution would render a
+ * single tree many times larger than a building; shrinking them to fit
+ * would blur hand-placed pixel art rather than show a genuine low-res
+ * version of it. Neither trade-off was accepted — `tree` stays on
+ * render.ts's OBJECT_COLORS flat-colour fallback, a deliberate decision,
+ * not an oversight.
+ *
+ * `rock`: the mountain sheet's one boulder-shaped sprite sits on a fully
+ * opaque cave-floor background — part of an interior scene, not a
+ * droppable prop — and its cliff-face tiles are diagonal terrain-autotile
+ * pieces, not a freestanding rock. Tiny RPG Town's one standalone rock
+ * candidate (reviewed in Phase B1) is a small, warm beige/tan-coloured
+ * pebble that reads as a loaf of bread or a dirt clump rather than a rock,
+ * and clashes with this project's existing grey-toned rock terrain
+ * (TERRAIN_SPRITES.rock, from the mountain sheet) — not used, by explicit
+ * decision, not because no candidate existed.
  */
 export const OBJECT_SPRITES: Partial<Record<ObjectKind, SpriteRect>> = {
   // Calciumtrice dungeon tileset, "FIRE 16x6" section: an isolated
@@ -84,6 +100,18 @@ export const OBJECT_SPRITES: Partial<Record<ObjectKind, SpriteRect>> = {
   // Calciumtrice dungeon tileset, "FLOOR STAIRS 32x32" section: a stone
   // staircase, taller than one tile (32px) like dungeon_wall/ancient_beacon.
   dungeon_exit: { sheet: "dungeon", x: 0, y: 240, w: 16, h: 32 },
+  // ansimuz "Tiny RPG Town" (CC0, free tier — see CREDITS.md), a genuinely
+  // isolated conifer-shaped bush with a transparent background, unlike
+  // every candidate previously found in the forest/dungeon sheets (which
+  // turned out to be ground-attached dirt patches or a flower, not a
+  // bush). Source file is public/assets/tiny-rpg-town/bush-2.png (30x32
+  // canvas); these coordinates are its own opaque bounding box within that
+  // file, found by alpha-channel scanning, not guessed. At 25x30 px
+  // (~1.6x1.9 tiles) it is close enough to this game's existing object
+  // scale (every other object/the player is 16x32 or smaller) not to clash
+  // the way the pack's tree sprites would have — see this constant's own
+  // doc-comment for why those were rejected.
+  bush: { sheet: "tiny-rpg-town", x: 3, y: 1, w: 25, h: 30 },
 };
 
 /**
