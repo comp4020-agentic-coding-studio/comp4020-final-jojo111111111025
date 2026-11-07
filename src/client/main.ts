@@ -12,7 +12,14 @@ import type { Building, CropStage, DungeonMap, FarmPlotState, ItemKind, MapObjec
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
 import { loadSounds, playSound, setBgmZone, startBgm } from "./audio.js";
 import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
-import { applyObjectDepleted, findGainedItem, GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
+import {
+  applyObjectDepleted,
+  findGainedItem,
+  GameClient,
+  isBuildCellFree,
+  type BeaconProgress,
+  type SnapshotEnemy,
+} from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
 import { loadSprites } from "./sprites.js";
 
@@ -1057,6 +1064,21 @@ function frame(): void {
     if (chestTarget) highlights.push({ x: chestTarget.x + 0.5, y: chestTarget.y + 0.5, color: "#4ac6ff" });
     const farmTarget = nearestFarmPlot();
     if (farmTarget) highlights.push({ x: farmTarget.x + 0.5, y: farmTarget.y + 0.5, color: "#8a6a3a" });
+    // Shows exactly the cell a "Place" click would target — the same
+    // Math.floor(localPos + facing) formula renderBuildingOptions' click
+    // handler sends to the server — so a player sees where a building
+    // will land, and whether that cell is free, before committing.
+    // Building is overworld-only (doBuild rejects any dungeon request), so
+    // this only ever makes sense to show there.
+    if (localZone === "overworld") {
+      const buildX = Math.floor(localPos.x + facing.dx);
+      const buildY = Math.floor(localPos.y + facing.dy);
+      highlights.push({
+        x: buildX + 0.5,
+        y: buildY + 0.5,
+        color: isBuildCellFree(world, buildings, buildX, buildY) ? "#4ad87a" : "#ff8c3a",
+      });
+    }
 
     render(
       ctx,

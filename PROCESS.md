@@ -1323,3 +1323,50 @@ whether a real player actually perceives the extra wanderers, the wider
 aggro range, and the faster respawns as "night is harder" (as opposed to
 each number independently being correct, which the tests above do
 confirm) was not observed in a running client.
+
+### Stage 11 — a build-target preview ring
+
+Asked why a "Place" click in the crafting panel had no preview of where
+the building would actually land — the target cell (`Math.floor(localPos
++ facing)`, the same formula the click handler already sent to the
+server) was never shown anywhere before the click committed.
+
+Reused the existing highlight-ring mechanism (`frame()`'s `highlights`
+array, already drawing a coloured ring over whatever E/Space/C/F would
+currently act on) rather than building a second preview system: a new
+ring is pushed at the build-target cell whenever the player is in the
+overworld (building is overworld-only — `doBuild` rejects a dungeon
+request), green if that cell is free, orange if something already
+occupies it.
+
+"Occupied" needed a client-side answer before the player clicks, not
+just a server rejection after — `isBuildCellFree` (extracted into
+`net.ts`, the same no-top-level-DOM-code module `applyObjectDepleted`/
+`findGainedItem` already live in, for the same testability reason)
+mirrors `Room.doBuild`'s own two-part occupancy check: `isCellBlocked`'s
+terrain/world-object rule (solid terrain, or a `SOLID_OBJECTS` object on
+that cell), plus `doBuild`'s own separate, stricter `buildingsByCell`
+check — any existing building at all blocks a new one, even a
+non-solid `floor`, which `isCellBlocked` alone wouldn't catch. This is a
+local, non-authoritative guess purely for the ring's colour; the server
+still re-validates everything on the actual `building.place` request
+regardless of what the preview said.
+
+**Testing.** `spec/build-preview.spec.ts` covers all of
+`isBuildCellFree`'s branches directly: free on plain ground; not free
+when there's no snapshot yet (`world === null`); not free out of bounds
+in any direction; not free on solid terrain (water) or a solid object
+(tree); free next to (not on) a solid object; free on a non-solid
+object's cell (a bush, since `SOLID_OBJECTS` doesn't include it); not
+free on an existing building regardless of whether that building is
+itself solid (`floor` included, confirming the stricter
+`buildingsByCell`-style rule, not just `isCellBlocked`'s narrower one);
+and free next to (not on) an existing building. Two of these — the
+`floor` and `wall` occupied-building cases — were deliberately run
+against a mutated (broken) version of the building-occupancy check
+first, confirming they actually fail when that check is broken, the same
+mutation-and-revert discipline every prior stage's new tests have used.
+
+**Not yet verified:** the same browser limitation as every prior stage —
+the ring's actual on-screen colour, position, and responsiveness to
+turning/moving were not observed in a running client.

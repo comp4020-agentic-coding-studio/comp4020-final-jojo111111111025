@@ -1,5 +1,5 @@
 import type { Building, DungeonMap, FarmPlotState, ItemKind, WorldMap, Zone } from "../shared/types.js";
-import { ITEM_KINDS } from "../shared/types.js";
+import { ITEM_KINDS, SOLID_OBJECTS, SOLID_TERRAIN } from "../shared/types.js";
 
 export interface SnapshotPlayer {
   id: string;
@@ -125,6 +125,37 @@ export function findGainedItem(
   after: Record<ItemKind, number>,
 ): ItemKind | undefined {
   return ITEM_KINDS.find((kind) => (after[kind] ?? 0) > (before[kind] ?? 0));
+}
+
+/**
+ * Mirrors Room.doBuild's overworld occupancy check — isCellBlocked's
+ * terrain/world-object rule, plus "any building at all on this cell
+ * blocks a new one" (doBuild's own separate buildingsByCell check, which
+ * is stricter than isCellBlocked alone: even a non-solid `floor` building
+ * occupies its cell against a second placement) — purely for the
+ * build-target preview ring's colour in main.ts. A local,
+ * non-authoritative guess so the ring can read green/red before the
+ * player commits to a placement, never a substitute for the server's own
+ * doBuild validation, which re-checks everything server-side regardless
+ * of what this says.
+ */
+export function isBuildCellFree(
+  world: (WorldMap & { dungeon: DungeonMap }) | null,
+  buildings: ReadonlyMap<string, Building>,
+  cx: number,
+  cy: number,
+): boolean {
+  if (!world) return false;
+  if (cx < 0 || cy < 0 || cx >= world.width || cy >= world.height) return false;
+  const tile = world.tiles[cy * world.width + cx];
+  if (tile && SOLID_TERRAIN.has(tile.terrain)) return false;
+  for (const obj of world.objects) {
+    if (obj.x === cx && obj.y === cy && SOLID_OBJECTS.has(obj.kind)) return false;
+  }
+  for (const building of buildings.values()) {
+    if (building.x === cx && building.y === cy) return false;
+  }
+  return true;
 }
 
 export class GameClient {

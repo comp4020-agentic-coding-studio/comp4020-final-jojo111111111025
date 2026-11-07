@@ -28,7 +28,9 @@ server issues on first load.
   "Craft" button is disabled client-side when you can't afford it, but the
   server re-validates every request regardless.
 - The building section of the same panel places a building directly in
-  front of you; `C` opens the nearest shared storage chest.
+  front of you, with a coloured ring on the map showing exactly which cell
+  before you click — green if it's free, orange if something's already
+  there; `C` opens the nearest shared storage chest.
 - Standing near a farm plot shows plant/water/harvest buttons for its
   current stage.
 - A day/night cycle (derived from elapsed wall-clock time, never a stored
