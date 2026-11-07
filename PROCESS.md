@@ -1236,3 +1236,90 @@ fake has had since Stage 6.
 neither the toast's new visual prominence nor the music's actual audible
 handoff between zones were confirmed in a real browser tab; both are
 confirmed by code review and the unit tests above.
+
+### Stage 10 — nightfall spawns extra, tougher wanderers
+
+Asked to make night actually harder. Before this stage, "night" only ever
+meant one thing: the map's fixed four wanderers, who are passive and
+don't aggro at all by day, start chasing players after dark — their
+count, speed, aggro range, and respawn time were otherwise identical to
+the (non-existent) daytime behaviour. Everything else — guardians, the
+boss, resource nodes, the map itself — was and remains completely
+unaffected by time of day.
+
+Picked, from several options, the specific combination of: more
+wanderers, a wider aggro/leash range once already engaged, and faster
+respawns, with exact numbers given directly rather than proposed and
+confirmed (10 extra wanderers; 2x aggro/leash range; a near-player
+movement speed of 3.5 tiles/sec, just under the player's own 4;
+15-second respawn instead of the standard 30).
+
+**Mechanism.** `Room.tick()` now tracks `wasNight` (a plain boolean field,
+compared each tick against the freshly-computed `isNight()`) to detect
+the dusk/dawn *edge*, not just the current state — spawning/despawning
+exactly once per transition rather than every tick. At the dusk edge,
+`spawnNightWanderers()` adds `NIGHT_WANDERER_COUNT` (10) extra wanderers
+in a deterministic ring 12 tiles around the campsite (the same
+fixed-offset-ring approach `map.ts`'s `enemySpawnsFor` already uses for
+the base roster, just computed at runtime instead of world-gen time,
+since these are transient, in-memory-only enemies that are never
+persisted — see `EnemyState`'s existing persistence note). At the dawn
+edge, `despawnNightWanderers()` removes every one of them outright —
+dead or alive, win or lose, no loot or kill credit either way — rather
+than letting them linger as another set of permanently-present enemies.
+A new `nightOnly` flag on `EnemyState` is what makes an enemy eligible
+for this removal and for the faster `WANDERER_NIGHT_RESPAWN_MS` (never
+set on the map's original fixed roster, which keeps the standard
+`ENEMY_RESPAWN_MS` even at night).
+
+The speed/aggro/leash boost applies to every wanderer, fixed-roster and
+night-only alike, for as long as it's night — `tickEnemy`'s existing
+`isWanderer`/day-passivity branch gained a `wandererNight` flag that
+swaps in `WANDERER_NIGHT_SPEED_TILES_PER_SEC` /
+`WANDERER_NIGHT_AGGRO_RANGE_TILES` / `WANDERER_NIGHT_LEASH_RANGE_TILES`
+in place of the day constants; by day, or for guardians/the boss, nothing
+changes. The existing campfire safe-radius check (`isNearSafeCampfire`)
+still applies uniformly to every wanderer the same way it always did —
+night-spawned wanderers get no special exemption from it, and no special
+bypass either.
+
+No protocol, persistence, or client change was needed: enemies have
+always been purely in-memory simulation state (`EnemyState` is explicit
+about never being persisted per-tick), and the client already reconciles
+its own enemy list against the server's current roster every
+`player.state` tick (adding new IDs, dropping ones that vanished) —
+exactly the mechanism a dead enemy already used, now also covering one
+that was removed outright rather than killed. `EnemyView` (what actually
+crosses the wire) gained no new field; `nightOnly` is a server-internal
+implementation detail the client has no reason to know about.
+
+**A real risk checked for, not assumed away: existing tests that advance
+a fake clock by large amounts.** Several pre-existing combat tests
+advance an injected clock by multiples of `ENEMY_RESPAWN_MS` (30s) to
+test respawn timing — nowhere close to `DAY_DURATION_MS` (5 minutes), so
+none of them accidentally cross into a night this stage's new spawn
+logic would react to. Checked directly rather than assumed, since a
+silent night-transition partway through an unrelated test would have
+been exactly the kind of flaky, hard-to-diagnose failure worth ruling
+out up front.
+
+**Testing.** `spec/night-difficulty.spec.ts` (new) covers: the exact
+count of wanderers added at the dusk edge; that they land within map
+bounds and aren't all stacked on one point; that spawning only happens
+once per night, not every tick; that every night-only wanderer vanishes
+at the dawn edge whether still alive or already dead (confirmed by
+actually killing one via the real `attack()` path, then advancing past
+dawn); that a wanderer's measured movement speed during a one-second
+night-time chase matches `WANDERER_NIGHT_SPEED_TILES_PER_SEC`, not the
+day constant; and that `maxHealth` is untouched (only
+speed/range/respawn-time scale, never raw health or damage). Three of
+these tests were deliberately run against a mutated (broken) version of
+the spawn/despawn/speed logic first, confirming each one actually fails
+when the feature is broken, not just when asked to pass — the same
+mutation-and-revert discipline every prior stage's new tests have used.
+
+**Not yet verified:** the same browser limitation as every prior stage —
+whether a real player actually perceives the extra wanderers, the wider
+aggro range, and the faster respawns as "night is harder" (as opposed to
+each number independently being correct, which the tests above do
+confirm) was not observed in a running client.

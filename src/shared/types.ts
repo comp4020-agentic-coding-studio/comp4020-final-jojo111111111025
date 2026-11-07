@@ -180,6 +180,15 @@ export interface EnemyState {
   contributors: Set<string>;
   /** Trash enemies only: epoch ms when a dead enemy should respawn. Checked each tick against the injected clock — never a real setTimeout, so tests stay deterministic under an injected `now()`. */
   respawnAt: number | null;
+  /**
+   * True only for the extra wanderers Room.tick spawns the instant night
+   * falls (see NIGHT_WANDERER_COUNT) — never set on the map's fixed
+   * roster. Removed outright (not killed: no loot, doesn't count toward
+   * any kill) the instant day breaks, and respawns on the shorter
+   * WANDERER_NIGHT_RESPAWN_MS timer rather than ENEMY_RESPAWN_MS while
+   * it's dead and night.
+   */
+  nightOnly: boolean;
 }
 
 /** A deterministic initial enemy placement, produced from the map/seed by `enemySpawnsFor` (shared/map.ts) so production and tests build the same roster from the same source. */

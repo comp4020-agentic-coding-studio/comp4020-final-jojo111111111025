@@ -25,6 +25,7 @@ import {
   ITEM_STACK_LIMIT,
   MAX_HEALTH,
   MAX_PLAYERS,
+  NIGHT_WANDERER_COUNT,
   PLAYER_RADIUS,
   PLAYER_SPEED_TILES_PER_SEC,
   SWORD_BONUS_DAMAGE,
@@ -32,6 +33,10 @@ import {
   WANDERER_CONTACT_DAMAGE,
   WANDERER_LEASH_RANGE_TILES,
   WANDERER_MAX_HEALTH,
+  WANDERER_NIGHT_AGGRO_RANGE_TILES,
+  WANDERER_NIGHT_LEASH_RANGE_TILES,
+  WANDERER_NIGHT_RESPAWN_MS,
+  WANDERER_NIGHT_SPEED_TILES_PER_SEC,
   WANDERER_SPEED_TILES_PER_SEC,
   ZONE_TRANSITION_RANGE_TILES,
 } from "../shared/constants.js";
@@ -172,9 +177,12 @@ export class Room {
   private readonly now: () => number;
   private readonly worldCreatedAt: number;
   private readonly enemies = new Map<string, EnemyState>();
+  private enemySeq = 0;
   private bossAlreadyDefeated: boolean;
   private beaconActivated: boolean;
   private readonly beaconMaterials: Record<BeaconMaterial, number>;
+  /** Tracks isNight() across ticks so tick() can detect the dusk/dawn edge (the instant it flips) rather than just the current state — see tick()'s night-wanderer spawn/despawn block. Starts false: a room is always constructed at the moment of a real or simulated "day" boundary in every existing call site (map generation always begins at dawn-equivalent), so there's no dusk transition to miss on the very first tick. */
+  private wasNight = false;
 
   constructor(
     map: WorldMap,
@@ -221,29 +229,10 @@ export class Room {
     for (const plot of initialFarmPlots) {
       this.farmPlots.set(plot.buildingId, plot);
     }
-    let enemySeq = 0;
     for (const spawn of enemySpawns) {
       if (spawn.kind === "boss" && bossAlreadyDefeated) continue; // a defeated boss never respawns, even across a restart
-      const id = `enemy-${spawn.kind}-${enemySeq++}`;
-      const maxHealth =
-        spawn.kind === "wanderer" ? WANDERER_MAX_HEALTH : spawn.kind === "guardian" ? GUARDIAN_MAX_HEALTH : BOSS_MAX_HEALTH;
-      this.enemies.set(id, {
-        id,
-        kind: spawn.kind,
-        zone: spawn.zone,
-        x: spawn.x,
-        y: spawn.y,
-        health: maxHealth,
-        maxHealth,
-        spawnX: spawn.x,
-        spawnY: spawn.y,
-        alive: true,
-        lastContactAt: -Infinity,
-        telegraphing: false,
-        nextActionAt: -Infinity,
-        contributors: new Set(),
-        respawnAt: null,
-      });
+      const id = `enemy-${spawn.kind}-${this.enemySeq++}`;
+      this.enemies.set(id, this.makeEnemyState(id, spawn, false));
     }
   }
 
@@ -339,6 +328,10 @@ export class Room {
       this.movePlayer(player, dtSeconds);
     }
     const now = this.now();
+    const night = this.isNight();
+    if (night && !this.wasNight) this.spawnNightWanderers();
+    if (!night && this.wasNight) this.despawnNightWanderers();
+    this.wasNight = night;
     for (const enemy of this.enemies.values()) {
       if (!enemy.alive) {
         if (enemy.respawnAt !== null && now >= enemy.respawnAt) {
@@ -353,6 +346,56 @@ export class Room {
       }
       this.tickEnemy(enemy, dtSeconds);
     }
+  }
+
+  /**
+   * Called exactly once, the instant isNight() flips from false to true —
+   * adds NIGHT_WANDERER_COUNT extra wanderers on top of the map's fixed
+   * roster, in a deterministic ring around the campsite (same style of
+   * fixed-offset placement map.ts's enemySpawnsFor uses for the base
+   * roster, just denser and generated at runtime instead of world-gen
+   * time, since these are transient and never persisted). Clamped into
+   * map bounds the same way enemySpawnsFor's wanderer offsets are.
+   */
+  private spawnNightWanderers(): void {
+    const { campsite } = this.map;
+    for (let i = 0; i < NIGHT_WANDERER_COUNT; i++) {
+      const angle = (i / NIGHT_WANDERER_COUNT) * Math.PI * 2;
+      const x = clamp(Math.round(campsite.x + Math.cos(angle) * 12), 1, this.map.width - 2);
+      const y = clamp(Math.round(campsite.y + Math.sin(angle) * 12), 1, this.map.height - 2);
+      const id = `enemy-wanderer-night-${this.enemySeq++}`;
+      this.enemies.set(id, this.makeEnemyState(id, { kind: "wanderer", zone: "overworld", x, y }, true));
+    }
+  }
+
+  /** Called exactly once, the instant isNight() flips from true to false — removes every night-only wanderer outright, dead or alive, win or lose (no loot, no kill credit either way). */
+  private despawnNightWanderers(): void {
+    for (const [id, enemy] of this.enemies) {
+      if (enemy.nightOnly) this.enemies.delete(id);
+    }
+  }
+
+  private makeEnemyState(id: string, spawn: EnemySpawn, nightOnly: boolean): EnemyState {
+    const maxHealth =
+      spawn.kind === "wanderer" ? WANDERER_MAX_HEALTH : spawn.kind === "guardian" ? GUARDIAN_MAX_HEALTH : BOSS_MAX_HEALTH;
+    return {
+      id,
+      kind: spawn.kind,
+      zone: spawn.zone,
+      x: spawn.x,
+      y: spawn.y,
+      health: maxHealth,
+      maxHealth,
+      spawnX: spawn.x,
+      spawnY: spawn.y,
+      alive: true,
+      lastContactAt: -Infinity,
+      telegraphing: false,
+      nextActionAt: -Infinity,
+      contributors: new Set(),
+      respawnAt: null,
+      nightOnly,
+    };
   }
 
   /** True if any living player is within CAMPFIRE_SAFE_RADIUS_TILES of a placed campfire — the brief's "defensive structure reduces danger" note. */
@@ -391,11 +434,25 @@ export class Room {
     }
 
     const isWanderer = enemy.kind === "wanderer";
-    const aggroRange = isWanderer ? WANDERER_AGGRO_RANGE_TILES : GUARDIAN_AGGRO_RANGE_TILES;
-    const speed = isWanderer ? WANDERER_SPEED_TILES_PER_SEC : GUARDIAN_SPEED_TILES_PER_SEC;
+    // Wanderers are passive by day — they simply don't aggro at all outside
+    // night. At night every wanderer (the map's fixed roster and the extra
+    // night-only spawns alike) also moves faster and notices/chases from
+    // further away — see the WANDERER_NIGHT_* constants' doc-comment.
+    const night = this.isNight();
+    const canAggro = isWanderer ? night : true;
+    const wandererNight = isWanderer && night;
+    const aggroRange = isWanderer
+      ? wandererNight
+        ? WANDERER_NIGHT_AGGRO_RANGE_TILES
+        : WANDERER_AGGRO_RANGE_TILES
+      : GUARDIAN_AGGRO_RANGE_TILES;
+    const speed = isWanderer
+      ? wandererNight
+        ? WANDERER_NIGHT_SPEED_TILES_PER_SEC
+        : WANDERER_SPEED_TILES_PER_SEC
+      : GUARDIAN_SPEED_TILES_PER_SEC;
+    const leashRange = wandererNight ? WANDERER_NIGHT_LEASH_RANGE_TILES : WANDERER_LEASH_RANGE_TILES;
     const contactDamage = isWanderer ? WANDERER_CONTACT_DAMAGE : GUARDIAN_CONTACT_DAMAGE;
-    // Wanderers are passive by day — they simply don't aggro at all outside night.
-    const canAggro = isWanderer ? this.isNight() : true;
 
     const target = canAggro ? this.nearestLivingPlayerInZone(enemy.zone, enemy.x, enemy.y) : undefined;
     const distToTarget = target ? Math.hypot(target.x - enemy.x, target.y - enemy.y) : Infinity;
@@ -406,7 +463,7 @@ export class Room {
 
     if (target && distToTarget <= aggroRange && !(isWanderer && this.isNearSafeCampfire(target.x, target.y))) {
       // Chase, unless pulled too far from spawn (wanderers only leash).
-      if (!isWanderer || distFromSpawn <= WANDERER_LEASH_RANGE_TILES) {
+      if (!isWanderer || distFromSpawn <= leashRange) {
         const dx = target.x - enemy.x;
         const dy = target.y - enemy.y;
         const len = Math.hypot(dx, dy) || 1;
@@ -579,7 +636,10 @@ export class Room {
     // same injected clock as everything else in Room. No setTimeout: a real
     // timer would run on wall-clock time regardless of an injected fake
     // clock, and would outlive this Room instance with nothing to cancel it.
-    enemy.respawnAt = this.now() + ENEMY_RESPAWN_MS;
+    // Night-only wanderers only ever exist during night (despawnNightWanderers
+    // clears them outright, dead or alive, the instant day breaks), so they
+    // always use the shorter night respawn timer rather than the standard one.
+    enemy.respawnAt = this.now() + (enemy.nightOnly ? WANDERER_NIGHT_RESPAWN_MS : ENEMY_RESPAWN_MS);
   }
 
   /** The tile grid and dimensions for a given zone — the dungeon is a disjoint coordinate space with its own grid, not a region of the overworld's. */

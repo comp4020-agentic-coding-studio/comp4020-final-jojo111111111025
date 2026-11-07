@@ -32,10 +32,13 @@ server issues on first load.
 - Standing near a farm plot shows plant/water/harvest buttons for its
   current stage.
 - A day/night cycle (derived from elapsed wall-clock time, never a stored
-  "current phase") brings out aggressive wanderers at night; a dungeon
-  holds a telegraphed boss fight. Defeating the boss and depositing enough
-  wood, stone, and the boss's ancient core at the beacon activates it —
-  the room's shared win condition.
+  "current phase") brings out aggressive wanderers at night — and night
+  itself gets harder as it goes on: ten extra wanderers spawn the instant
+  it falls (gone again at dawn), and every wanderer moves faster, notices
+  players from further away, and respawns quicker for the night's
+  duration. A dungeon holds a telegraphed boss fight. Defeating the boss
+  and depositing enough wood, stone, and the boss's ancient core at the
+  beacon activates it — the room's shared win condition.
 - The player list at the top shows everyone in the room and whether
   they're connected or just holding their slot during a reconnect grace
   window.

@@ -71,6 +71,29 @@ export const WANDERER_AGGRO_RANGE_TILES = 4;
 export const WANDERER_LEASH_RANGE_TILES = 8;
 export const CAMPFIRE_SAFE_RADIUS_TILES = 3;
 
+/**
+ * Night-only wanderer difficulty boost (Room.tick applies these in place
+ * of the plain WANDERER_* constants above whenever isNight() is true, for
+ * every wanderer — the original fixed roster and the extra night-only
+ * spawns below alike). Day values are untouched; these only ever apply
+ * while isNight() is true.
+ */
+export const WANDERER_NIGHT_SPEED_TILES_PER_SEC = 3.5; // just under PLAYER_SPEED_TILES_PER_SEC (4) — a wanderer can almost, but not quite, outrun a fleeing player
+export const WANDERER_NIGHT_AGGRO_RANGE_TILES = WANDERER_AGGRO_RANGE_TILES * 2;
+export const WANDERER_NIGHT_LEASH_RANGE_TILES = WANDERER_LEASH_RANGE_TILES * 2;
+/** Wanderers killed at night respawn this much faster than ENEMY_RESPAWN_MS — sustained pressure through a full night rather than one wave thinning out. */
+export const WANDERER_NIGHT_RESPAWN_MS = 15_000;
+
+/**
+ * How many extra wanderers spawn the instant night falls, on top of the
+ * map's fixed roster — despawned (not killed: no loot, doesn't count as a
+ * kill) the instant day breaks. Positioned in a ring around the campsite,
+ * the same deterministic-ring approach map.ts's enemySpawnsFor already
+ * uses for the base roster, so the same seed always produces the same
+ * night spawns rather than scattering them randomly.
+ */
+export const NIGHT_WANDERER_COUNT = 10;
+
 export const GUARDIAN_MAX_HEALTH = 60;
 export const GUARDIAN_CONTACT_DAMAGE = 10;
 export const GUARDIAN_SPEED_TILES_PER_SEC = 1.5;
