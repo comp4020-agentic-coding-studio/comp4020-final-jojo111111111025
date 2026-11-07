@@ -82,18 +82,24 @@ pnpm test
 
 ## Art
 
-The overworld uses ansimuz's Tiny RPG Forest and Mountain tilesets (CC0);
-the dungeon uses Calciumtrice's Dungeon Tileset (CC-BY 3.0); bushes use a
-sprite from ansimuz's separate Tiny RPG Town pack (CC0). Full credits and
-license text are in [`public/assets/CREDITS.md`](public/assets/CREDITS.md).
-Terrain and most objects (campfires, the ancient beacon, dungeon
-entrances/exits, bushes) are sprited; water, trees, and the rock object
-render as flat colour — not because no candidate asset was ever found, but
-because every one found (including from the Tiny RPG Town pack) was
+The overworld's grass and water use LimeZu's Serene Village - revamped
+(CC-BY 4.0); its forest ground and mountain terrain use ansimuz's Tiny RPG
+Forest and Mountain tilesets (CC0); the dungeon uses Calciumtrice's Dungeon
+Tileset (CC-BY 3.0); bushes use a sprite from ansimuz's separate Tiny RPG
+Town pack (CC0). Full credits and license text are in
+[`public/assets/CREDITS.md`](public/assets/CREDITS.md). Terrain and most
+objects (campfires, the ancient beacon, dungeon entrances/exits, bushes)
+are sprited; trees and the rock object render as flat colour — not because
+no candidate asset was ever found, but because every one found was
 rejected on a concrete ground: a scale mismatch 6-7x this game's existing
-objects for trees, a colour/style mismatch for the rock, and a repeating
-tiling artifact for water. See `PROCESS.md`'s Stage 2 and Stage 4 sections
-for the full per-asset reasoning. The player and all three enemy
+objects for trees, a colour/style mismatch for the rock. A grass tile next
+to water draws a soft, rotated edge sprite instead of a hard colour cut;
+every other terrain boundary (grass/rock, grass/forest, rock/water) still
+draws as a hard edge, and even the water/grass edge stops at a straight
+line — there's no rounded-corner variant, because none exists in the
+source art (confirmed by a full programmatic scan, not just unsearched).
+See `PROCESS.md`'s Stage 2, Stage 4, and Stage 5 sections for the full
+per-asset reasoning. The player and all three enemy
 kinds also use sprites from the dungeon tileset. These are single static
 poses with no walk/attack animation and no facing variation — a moving
 character doesn't visibly animate or turn. The local player is still told

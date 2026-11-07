@@ -1,10 +1,20 @@
 import { TILE_SIZE } from "../shared/constants.js";
 import type { Building, MapObject, MapTile } from "../shared/types.js";
-import { ENEMY_SPRITES, getImage, OBJECT_SPRITES, PLAYER_SPRITES, TERRAIN_SPRITES } from "./sprites.js";
+import {
+  ENEMY_SPRITES,
+  getImage,
+  OBJECT_SPRITES,
+  PLAYER_SPRITES,
+  TERRAIN_SPRITES,
+  WATER_GRASS_EDGE_SPRITE,
+} from "./sprites.js";
 
-/** Fallback for a terrain kind with no sprite (today: only "water" — neither
- * approved pack includes open water) and for any tile drawn before its
- * sheet has finished loading. */
+/** Fallback for any tile drawn before its sheet has finished loading. Every
+ * TerrainKind has a sprite as of Stage 5 (TERRAIN_SPRITES), so this fires
+ * only during the brief image-load window, not for a permanently-unsprited
+ * kind — kept as a plain colour-per-kind map rather than one shared colour
+ * so that load-in-progress tiles are still distinguishable from each
+ * other. */
 const TERRAIN_COLORS: Record<string, string> = {
   grass: "#4a7c3c",
   forest: "#2e5a2a",
@@ -94,7 +104,14 @@ export function render(
     for (let col = startCol; col < endCol; col++) {
       const tile = zone.tiles[row * zone.width + col];
       if (!tile) continue;
-      drawTile(ctx, tile.terrain, Math.round(col * TILE_SIZE - originX), Math.round(row * TILE_SIZE - originY));
+      drawTile(
+        ctx,
+        zone,
+        row,
+        col,
+        Math.round(col * TILE_SIZE - originX),
+        Math.round(row * TILE_SIZE - originY),
+      );
     }
   }
 
@@ -190,27 +207,106 @@ export function drawPlayerMarker(ctx: CanvasRenderingContext2D, player: RenderPl
 }
 
 /**
+ * One quarter-turn per compass direction the water/grass edge sprite can be
+ * rotated to, so a single north-facing (water-above/grass-below) sprite
+ * covers all four directions a neighbour can differ in. Radians, clockwise,
+ * matching ctx.rotate()'s convention.
+ */
+const EDGE_ROTATION_FOR_NEIGHBOR: Record<"N" | "E" | "S" | "W", number> = {
+  N: 0,
+  E: Math.PI / 2,
+  S: Math.PI,
+  W: -Math.PI / 2,
+};
+
+/**
+ * Draws WATER_GRASS_EDGE_SPRITE rotated so its "water" half faces the given
+ * neighbour direction (the direction, relative to the tile being drawn,
+ * where the different-terrain neighbour was found). Rotation is done
+ * around the tile's own centre: translate there, rotate, draw the sprite
+ * centred on the new origin, restore — the standard canvas
+ * rotate-around-a-point recipe, needed because ctx.rotate() always pivots
+ * on the current origin (0,0), not an arbitrary point.
+ */
+function drawWaterGrassEdge(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  direction: "N" | "E" | "S" | "W",
+  x: number,
+  y: number,
+): void {
+  const rect = WATER_GRASS_EDGE_SPRITE;
+  ctx.save();
+  ctx.translate(x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+  ctx.rotate(EDGE_ROTATION_FOR_NEIGHBOR[direction]);
+  ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, -rect.w / 2, -rect.h / 2, rect.w, rect.h);
+  ctx.restore();
+}
+
+/**
  * Draws one terrain tile at the given destination pixel position. Tries the
- * sprite sheet first (TERRAIN_SPRITES); falls back to a flat TERRAIN_COLORS
- * fill when there's no sprite for this terrain (today: "water" only) or the
- * sheet hasn't finished loading yet, so the map is never blank while
- * sprites load. Walls (dungeon_wall) are 16x32 — taller than the 16x16
+ * sprite sheet first (TERRAIN_SPRITES); every TerrainKind has a sprite as
+ * of Stage 5, so the flat TERRAIN_COLORS fill now only fires while a
+ * sheet is still loading, not for a permanently-unsprited kind — the map
+ * is never blank during that brief window. Walls (dungeon_wall) are 16x32
+ * — taller than the 16x16
  * floor grid — so they're bottom-anchored to the tile's bottom edge, which
  * makes a wall tile correctly paint over the floor tile directly above it
  * (walls read as "standing up" out of the floor, not floating above it).
  * drawObject/drawEnemy and the player-sprite code in render() all reuse this
  * same bottom-anchor formula for their own taller-than-one-tile sprites.
+ *
+ * After the base tile, checks the tile's four orthogonal neighbours
+ * (reading directly from zone.tiles — the same flat row-major array
+ * render() already has, no new data fetched) for a water/grass boundary
+ * and overlays WATER_GRASS_EDGE_SPRITE, rotated to face whichever side(s)
+ * the other terrain is on, so the join reads as a soft, natural edge
+ * instead of a hard colour-to-colour cut. This is the one terrain pair
+ * Stage 5 found a verified transition sprite for — every other boundary
+ * (grass/rock, grass/forest, rock/water, ...) still draws as a hard edge,
+ * a stated, deliberate limitation (see PROCESS.md's Stage 5 section), not
+ * an oversight silently left out of this function.
  */
-function drawTile(ctx: CanvasRenderingContext2D, terrain: string, x: number, y: number): void {
+export function drawTile(
+  ctx: CanvasRenderingContext2D,
+  zone: RenderZone,
+  row: number,
+  col: number,
+  x: number,
+  y: number,
+): void {
+  const tile = zone.tiles[row * zone.width + col]!;
+  const terrain = tile.terrain;
   const rect = TERRAIN_SPRITES[terrain as keyof typeof TERRAIN_SPRITES];
   const img = rect && getImage(rect);
   if (rect && img) {
     const destY = y - (rect.h - TILE_SIZE); // bottom-anchor sprites taller than one tile
     ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, x, destY, rect.w, rect.h);
-    return;
+  } else {
+    ctx.fillStyle = TERRAIN_COLORS[terrain] ?? "#000";
+    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
   }
-  ctx.fillStyle = TERRAIN_COLORS[terrain] ?? "#000";
-  ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+
+  // Only grass tiles draw the edge overlay — from water's side, the
+  // neighbouring grass tile's own overlay already paints the join; drawing
+  // it from both sides would stack two overlays on the same seam.
+  if (terrain !== "grass") return;
+  const edgeImg = getImage(WATER_GRASS_EDGE_SPRITE);
+  if (!edgeImg) return;
+  // Bounds-checked explicitly: zone.tiles is a flat row-major array, so an
+  // out-of-range row/col would otherwise silently wrap into the adjacent
+  // row (e.g. col=-1 reading the previous row's last cell) instead of
+  // correctly reporting "no neighbour here" at the map's own edge.
+  const neighborIsWater = (dr: number, dc: number): boolean => {
+    const nr = row + dr;
+    const nc = col + dc;
+    if (nr < 0 || nr >= zone.height || nc < 0 || nc >= zone.width) return false;
+    return zone.tiles[nr * zone.width + nc]?.terrain === "water";
+  };
+  if (neighborIsWater(-1, 0)) drawWaterGrassEdge(ctx, edgeImg, "N", x, y);
+  if (neighborIsWater(1, 0)) drawWaterGrassEdge(ctx, edgeImg, "S", x, y);
+  if (neighborIsWater(0, -1)) drawWaterGrassEdge(ctx, edgeImg, "W", x, y);
+  if (neighborIsWater(0, 1)) drawWaterGrassEdge(ctx, edgeImg, "E", x, y);
 }
 
 /**

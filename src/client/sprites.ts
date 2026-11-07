@@ -14,7 +14,7 @@
 import type { EnemyKind, ObjectKind, TerrainKind } from "../shared/types.js";
 
 export interface SpriteRect {
-  sheet: "forest" | "mountain" | "dungeon" | "tiny-rpg-town";
+  sheet: "forest" | "mountain" | "dungeon" | "tiny-rpg-town" | "serene-village";
   x: number;
   y: number;
   w: number;
@@ -26,30 +26,99 @@ const SHEET_PATHS: Record<SpriteRect["sheet"], string> = {
   mountain: "/assets/mountain/tileset.png",
   dungeon: "/assets/dungeon/tileset.png",
   "tiny-rpg-town": "/assets/tiny-rpg-town/bush-2.png",
+  "serene-village": "/assets/serene-village/terrains.png",
 };
 
 /**
- * One sprite per TerrainKind. `water` has no sprite in either approved
- * pack (neither ansimuz's forest/mountain nor Calciumtrice's dungeon
- * tileset includes open water) — render.ts keeps a flat-colour fallback
- * for it, same as before this integration.
+ * One sprite per TerrainKind.
+ *
+ * `grass` was replaced in Stage 5 (Task B) — the original ansimuz tile was
+ * a flat, low-saturation olive-green with no internal texture; LimeZu's
+ * "Serene Village - revamped" pack (CC-BY 4.0 — see CREDITS.md) supplies a
+ * brighter, textured grass tile from the same kind of RPG-Maker autotile
+ * sheet Stage 4 already knew how to crop a pure interior cell from.
+ *
+ * `water` also gained a real sprite in Stage 5 — every previously-evaluated
+ * pack (ansimuz's forest/mountain, Calciumtrice's dungeon, and Tiny RPG
+ * Town, researched in Stage 4) either had no water at all or only a
+ * hand-painted pond/waterfall scene that produced a visible repeating
+ * pattern when tiled at this game's 16px grid (documented in PROCESS.md's
+ * Stage 4 section). Serene Village's terrain sheet is a proper RPG-Maker
+ * autotile sheet — its water section has a genuine solid-colour interior
+ * cell, not a scene fragment, so it tiles cleanly.
+ *
+ * `forest` deliberately keeps its original ansimuz sprite, not a Serene
+ * Village one: that pack has only a single grass tone, with no separate
+ * darker/forest-floor variant, and `forest`/`grass` sharing one ground tile
+ * with trees as the only biome-distinguishing element was Stage 1's
+ * original design (now stale as a "tree objects" claim, since tree objects
+ * are still flat-colour — see OBJECT_SPRITES — but the ground-tile
+ * reasoning holds regardless of what's drawn on top of it). Mixing a new
+ * bright-green grass with the old sprite for forest would make the two
+ * biomes look like an inconsistent reskin rather than a deliberate pair;
+ * `forest` will move to a matching sprite once one is found, not before.
  */
 export const TERRAIN_SPRITES: Partial<Record<TerrainKind, SpriteRect>> = {
-  // ansimuz forest tileset: a clean, unbordered grass tile.
-  grass: { sheet: "forest", x: 384, y: 80, w: 16, h: 16 },
-  // ansimuz forest tileset: the clean dirt/path tile, used for "forest" too
-  // since the pack has only one plain ground colour — the tree objects
-  // drawn on top are what visually distinguish the two biomes in-game, not
-  // the ground tile itself.
+  // LimeZu "Serene Village - revamped" terrain autotile sheet: a pure
+  // interior grass cell (no edge/transition pixels), found by alpha/colour
+  // scanning the 47-cell autotile block, not guessed.
+  grass: { sheet: "serene-village", x: 48, y: 0, w: 16, h: 16 },
+  // ansimuz forest tileset: the clean dirt/path tile, kept as-is — see this
+  // constant's own doc-comment for why "forest" doesn't move to the new
+  // pack alongside "grass".
   forest: { sheet: "forest", x: 208, y: 288, w: 16, h: 16 },
   // ansimuz mountain tileset: the one flat (non-cliff-face) grey tile,
   // used for the overworld's walkable rock/mountain biome.
   rock: { sheet: "mountain", x: 48, y: 16, w: 16, h: 16 },
+  // LimeZu "Serene Village - revamped": a pure interior water cell from the
+  // same autotile sheet as grass above — solid colour, no wave/edge
+  // pixels, confirmed tileable (see PROCESS.md's Stage 5 section for the
+  // seam check this was verified against before being accepted).
+  water: { sheet: "serene-village", x: 224, y: 224, w: 16, h: 16 },
   // Calciumtrice dungeon tileset: floor and wall. The wall sprite is
   // 16x32 (taller than the tile grid) by the author's own design — see
   // CREDITS.md. render.ts's drawTile bottom-anchors it to compensate.
   dungeon_floor: { sheet: "dungeon", x: 16, y: 144, w: 16, h: 16 },
   dungeon_wall: { sheet: "dungeon", x: 16, y: 64, w: 16, h: 32 },
+};
+
+/**
+ * The one terrain-boundary transition sprite Stage 5 found and verified: a
+ * clean, fully-opaque, water-above/grass-below 16x16 split with no
+ * decorative noise (no path, no stray third colour) — found by
+ * programmatically scanning every 16x16 cell in the Serene Village terrain
+ * sheet for a near-50/50 two-colour split, not by eye (repeated by-eye
+ * passes on this same sheet produced inconsistent, self-contradicting
+ * coordinate judgements; only the programmatic scan's distance-to-reference
+ * colour classification actually confirmed this one, and ruled out the
+ * others — see PROCESS.md's Stage 5 section for the full account). This
+ * single sprite is drawn in one of four 90-degree rotations by drawTile()
+ * to cover all four compass directions — safe here specifically because
+ * the sprite is a flat, direction-neutral colour split with no asymmetric
+ * detail.
+ *
+ * No corner/inner-corner variant exists for this terrain pair: a
+ * programmatic quarter-cell scan of the *entire* 768x768 sheet (sampling
+ * all four 8x8 quadrants of every 16x16 cell, not just one point) found
+ * exactly one grass/water split pattern in the whole file — this one.
+ * Water-surrounded-by-grass therefore always renders with a hard right-
+ * angle corner where two rotated edges meet; this is a real, verified
+ * limitation of the source art, not a gap in the search. (The same
+ * quarter-cell scan found six grass/sand corner/edge patterns elsewhere in
+ * the sheet, which looked promising at first, but every one of them turned
+ * out on visual inspection to include stray decorative detail — a path,
+ * an isolated patch — not a clean geometric corner; none were usable for
+ * the same reason the grass/sand edge candidate from the first pass
+ * wasn't: this source art is a hand-painted scene collection, not a
+ * systematically-authored blob-tileset, and quarter-pattern matches alone
+ * don't guarantee a clean shape.)
+ */
+export const WATER_GRASS_EDGE_SPRITE: SpriteRect = {
+  sheet: "serene-village",
+  x: 64,
+  y: 512,
+  w: 16,
+  h: 16,
 };
 
 /**

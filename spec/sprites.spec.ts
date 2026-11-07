@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TERRAIN_SPRITES } from "../src/client/sprites.js";
-import { SOLID_TERRAIN } from "../src/shared/types.js";
+import { SOLID_TERRAIN, type TerrainKind } from "../src/shared/types.js";
 
 /**
  * Pure data-shape checks for the sprite manifest — no DOM/Image loading
@@ -29,8 +29,19 @@ describe("TERRAIN_SPRITES manifest", () => {
     expect(TERRAIN_SPRITES.dungeon_floor).toBeDefined();
   });
 
-  it("documents water as the one terrain with no sprite (render.ts's fallback color is intentional, not a gap)", () => {
-    expect(TERRAIN_SPRITES.water).toBeUndefined();
+  it("has a sprite for every TerrainKind — Stage 5 gave water its own sprite, closing the one remaining gap from Stage 1", () => {
+    const kinds: TerrainKind[] = ["grass", "forest", "water", "rock", "dungeon_floor", "dungeon_wall"];
+    for (const kind of kinds) {
+      expect(TERRAIN_SPRITES[kind], `${kind}'s sprite`).toBeDefined();
+    }
+  });
+
+  it("water's sprite matches the exact verified coordinates and source sheet from Stage 5's asset inspection", () => {
+    expect(TERRAIN_SPRITES.water).toEqual({ sheet: "serene-village", x: 224, y: 224, w: 16, h: 16 });
+  });
+
+  it("grass's sprite matches the exact verified coordinates and source sheet from Stage 5's asset inspection", () => {
+    expect(TERRAIN_SPRITES.grass).toEqual({ sheet: "serene-village", x: 48, y: 0, w: 16, h: 16 });
   });
 
   it("dungeon_wall is the only sprite taller than one tile grid cell (16px) — the anchor logic in drawTile only needs to handle this one case today", () => {

@@ -792,3 +792,169 @@ and networking are untouched; `SOLID_OBJECTS.has("bush")` is asserted
 existing sprite-drawing branch and has no effect on any sprite that was
 already exactly `TILE_SIZE` wide — confirmed by a dedicated test for
 exactly that case, not assumed from reading the diff alone.
+
+### Stage 5 — map ground tiles and a water/grass edge
+
+Replaced the overworld's flat, low-saturation `grass` tile and the
+long-standing flat-colour `water` fallback with sprites from a new pack,
+then added a single verified edge-transition sprite so grass next to water
+reads as a soft boundary rather than a hard colour cut.
+
+**Asset research.** The brief asked for a brighter, more detailed,
+"Stardew-Valley-adjacent" ground look, not the muted autumn palette
+Stages 1–4's ansimuz/Calciumtrice packs share. Re-inspected the three
+already-approved sheets first — confirmed (by decoding, not assuming) that
+none contains a second grass tone or any open-water tile; the closest
+candidate, ansimuz's own separate "Tiny RPG Adventure" pack (the upstream
+source of this project's existing `forest/tileset.png`, confirmed
+byte-identical by MD5), turned out to have only a hand-painted
+pond/waterfall scene and oversized standalone objects, the same
+Stage-4-documented problem repeating in a sibling pack. Chose LimeZu's
+"Serene Village - revamped" (CC-BY 4.0, free, 16x16 grid) instead: a
+brighter palette, a genuine RPG-Maker-style terrain sheet, and the same
+"attribution required" licence category this project already handles for
+Calciumtrice's pack.
+
+**What got replaced, and what deliberately didn't:**
+
+- `grass` → a textured interior cell from the new pack's terrain sheet,
+  `x=48,y=0`. The old ansimuz tile is a flat, uniform olive-green; the new
+  one has a two-tone checkerboard micro-texture, confirmed fully opaque
+  (safe to tile with no transparency gaps) before being accepted.
+- `water` → `x=224,y=224` from the same sheet — a genuinely solid interior
+  water cell, unlike every water candidate evaluated in Stages 1 and 4
+  (ansimuz forest/mountain had none at all; Calciumtrice's dungeon sheet
+  had none; Tiny RPG Town's pond was a hand-painted scene fragment that
+  produced a visible ~10px repeat when tiled). This is a genuine RPG-Maker
+  autotile sheet, so its interior cells tile cleanly by construction —
+  confirmed directly (opacity check, no transparency holes) rather than
+  assumed from the sheet's format alone.
+- `forest` and `rock` deliberately **kept their existing sprites**. The new
+  pack has only one grass tone, with no separate darker "forest floor"
+  variant — moving `grass` alone and leaving `forest` on the old tile keeps
+  the two overworld biomes visually distinct, which was Stage 1's original
+  design intent; mixing a bright new grass with an old sprite for `forest`
+  would read as an inconsistent reskin, not a matched pair. `rock` wasn't
+  evaluated against this new pack in this pass at all — no claim is made
+  that no candidate exists there, only that none was looked for.
+
+**A real technical limit found, not glossed over: hard edges everywhere
+except one verified pair.** Placing the new grass and water tiles directly
+adjacent (as the existing map generator already does, with no transition
+tiles) produces a visible hard colour-to-colour cut at every terrain
+boundary — confirmed by rendering an actual adjacency test, not assumed.
+Addressing this took three attempts, the first two of which are recorded
+here because they produced real, verified negative results, not because
+they "almost worked":
+
+1. **By-eye coordinate hunting on the terrain sheet.** Produced repeated,
+   self-contradicting judgements about the same coordinates — a region
+   confirmed as a clean edge tile in one crop looked wrong in the next
+   because the sheet mixes genuine terrain boundaries with decorative
+   details (a narrow dirt path cuts across several rows of the
+   grass/sand region) that are easy to mistake for parts of the boundary
+   shape itself when eyeballing a red-gridded crop. Abandoned as
+   unreliable, not merely difficult.
+2. **Full RPG-Maker A2 "47-shape blob autotile" support.** Researched the
+   actual public format spec (a 16-tile-wide-by-12-tile-tall sheet of 32
+   fixed "kind" blocks, each a quarter-tile composition of up to 48
+   shapes). Checked this project's sheet against that geometry
+   first — it does **not** match any valid tile size (`768×768` isn't
+   `12×T` for any sheet width that's also `16×T`) — confirming the file is
+   a hand-arranged "preview sheet" of scene fragments, not a
+   standards-compliant A2 autotile grid. The public formula therefore
+   cannot locate shapes in it; a full 47-shape implementation would mean
+   manually identifying every corner/edge variant in a non-standard
+   layout, repeating the same by-eye unreliability at far larger scale. A
+   programmatic full-sheet scan (sampling all four 8x8 quadrants of every
+   16x16 cell, classifying each quadrant by colour-distance to a grass/
+   water/sand reference) found that **water/grass has exactly one
+   quarter-pattern in the entire 768x768 sheet** — the single edge tile
+   this stage uses — with zero corner variants anywhere. The same scan
+   found six quarter-patterns for grass/sand, which looked promising, but
+   every one was confirmed by direct visual crop to include stray
+   decorative detail (the same dirt path, isolated patches) rather than a
+   clean geometric corner shape. This is a verified property of the
+   source art, not a search failure: the sheet is a hand-painted
+   collection of scene fragments, and quarter-pattern matching alone
+   cannot distinguish a genuine corner shape from decoration that happens
+   to sit across a quadrant boundary.
+3. **One verified direct-edge sprite, rotated four ways.** Accepted the
+   single confirmed-clean water/grass sprite (`x=64,y=512`, a fully-opaque
+   water-above/grass-below 16x16 split with no decorative noise) as the
+   only transition this stage would ship, and made it cover all four
+   compass directions with a single asset: `drawTile()` now checks a
+   grass tile's four orthogonal neighbours (reading directly from the
+   existing flat `zone.tiles` row-major array `render()` already has — no
+   new data fetched) and, where a neighbour is water, draws the edge
+   sprite rotated 0/90/180/-90 degrees to face that side, using the
+   standard canvas translate-to-centre/rotate/restore recipe. Verified
+   safe to rotate (the sprite has no asymmetric detail that a rotation
+   would visibly mangle) by checking all four rotations against the
+   source pixels with an independent script before trusting the browser
+   code to do the same transform.
+
+**What this does and does not fix, stated plainly:** a grass tile directly
+adjacent to water now gets a soft, textured edge instead of a flat colour
+cut, in whichever of the four directions the water actually is (including
+multiple directions on the same tile, e.g. a narrow grass peninsula with
+water on three sides). It does **not** produce a rounded corner where two
+edges meet at a right angle — confirmed above that no corner asset exists
+in this source file to draw there, so two rotated straight edges simply
+meet at a hard right angle, visually better than a flat cut on two sides
+but still a corner, not a curve. It does **not** cover any other terrain
+pair — grass/rock, grass/forest, and rock/water all still draw a hard
+edge; this one pair was the only one with a usable sprite, not a sample of
+a larger planned set. Only grass tiles draw the overlay (checked
+explicitly) — water tiles never draw it on their own side, so a boundary
+is never double-painted from both tiles meeting there.
+
+**Files changed:** `public/assets/serene-village/terrains.png` (new —
+original 768x768 canvas, byte-identical to the downloaded source,
+confirmed by MD5), `src/client/sprites.ts` (`TERRAIN_SPRITES.grass`/
+`.water` repointed; new `WATER_GRASS_EDGE_SPRITE` export), `src/client/
+render.ts` (`drawTile()` gained the `zone`/`row`/`col` parameters it needs
+to read neighbours, plus the new `drawWaterGrassEdge()` helper and
+`EDGE_ROTATION_FOR_NEIGHBOR` lookup; its one caller in `render()` updated
+to match), `spec/sprites.spec.ts` (the stale "water has no sprite"
+assertion corrected to its opposite, plus exact-coordinate checks for
+`grass`/`water`), `spec/terrain-edge.spec.ts` (new), `public/assets/
+CREDITS.md`, `README.md`.
+
+**Verification:** `pnpm typecheck` and `pnpm build:client` both clean.
+`pnpm test` — 252/252 passing across 30 spec files (245 from before this
+stage + 7 new in `spec/terrain-edge.spec.ts`), 0 regressions. `node
+scripts/check-evidence.ts` passes. The built `public/main.js` was grepped
+to confirm the new asset path and sprite coordinates are present in the
+shipped bundle. `curl -I` against a locally-running instance confirmed
+`serene-village/terrains.png` serves `200`/`image/png`.
+`spec/terrain-edge.spec.ts`'s bounds-check test was sanity-checked by
+deliberately removing the neighbour bounds check in `drawTile()` and
+confirming the suite actually fails (1 of 7 tests red, the bounds-check
+test specifically), then restoring it — the same mutation-and-revert
+discipline every prior stage's new tests used; the rotation math itself
+was independently verified by simulating the exact
+translate/rotate/sample transform in a separate script and visually
+confirming all four directions before trusting the in-browser canvas
+calls to do the same thing.
+
+**Not yet verified — stated plainly, same caveat as every prior stage:**
+no real browser is available in this environment (confirmed again this
+stage: `npx playwright install` downloads a working Chromium binary, but
+launching it fails on this container with missing system libraries —
+`libnspr4.so`, `libnss3.so`, `libnssutil3.so`, `libasound.so.2` — and
+fixing that needs root, which this environment doesn't grant
+non-interactively; a filesystem-wide search confirmed no existing copy of
+these libraries to borrow instead). So none of this stage's claims about
+*in-game* appearance are a screenshot of the running game: every image
+referenced during this stage's design process was produced by a
+scratch, dependency-free Python PNG decoder/compositor replicating
+`render()`'s and `drawTile()`'s exact pixel and rotation formulas against
+the actual committed asset files — the same technique Stage 4 used for
+the same reason — not an execution of `render.ts` itself. This matters
+most for the one new thing this stage adds that no prior stage touched:
+a runtime decision (which rotation to draw, if any) made per-tile from
+neighbouring map data, rather than a fixed sprite-to-kind lookup — correct
+behaviour here depends on the real map generator's actual terrain
+layout meeting this logic at render time, which only an actual rendered,
+interactive frame can confirm.
