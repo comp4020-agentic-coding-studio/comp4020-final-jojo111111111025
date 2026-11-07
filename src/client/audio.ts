@@ -33,8 +33,8 @@ const BGM_PATHS: Record<BgmZone, string> = {
   dungeon: "/assets/audio/bgm-dungeon.ogg",
 };
 
-/** Background music plays much quieter than a foreground sound effect — it's meant to sit under the game, not compete with a sword hit or a pickup chime. */
-const BGM_VOLUME = 0.25;
+/** Background music plays quieter than a foreground sound effect — it's meant to sit under the game, not compete with a sword hit or a pickup chime — but still audible, not just a faint hint of ambience. */
+const BGM_VOLUME = 0.4;
 
 const buffers = new Map<SoundName, HTMLAudioElement>();
 
