@@ -257,6 +257,13 @@ export const CombatEventMessage = z.object({
   enemyDied: z.boolean(),
 });
 
+/** Broadcast to every connected client the instant a resource node is gathered, so everyone's view of its remaining yield stays in sync, not just the gatherer's. */
+export const ObjectDepletedMessage = z.object({
+  type: z.literal("object.depleted"),
+  objectId: z.string(),
+  remaining: z.number(),
+});
+
 export const BeaconProgressMessage = z.object({
   type: z.literal("beacon.progress"),
   wood: z.number(),
@@ -298,6 +305,7 @@ export type ServerMessage =
   | z.infer<typeof PlayerStateMessage>
   | z.infer<typeof ActionResultMessage>
   | z.infer<typeof CombatEventMessage>
+  | z.infer<typeof ObjectDepletedMessage>
   | z.infer<typeof BeaconProgressMessage>
   | z.infer<typeof BeaconVictoryMessage>
   | z.infer<typeof EntitySpawnedMessage>

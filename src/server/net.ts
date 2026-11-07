@@ -244,6 +244,13 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
           inventory: result.inventory,
           objectRemaining: result.objectRemaining,
         });
+        if (result.ok && result.objectRemaining !== undefined) {
+          broadcast(connections, {
+            type: "object.depleted",
+            objectId: msg.objectId,
+            remaining: result.objectRemaining,
+          });
+        }
         return;
       }
 

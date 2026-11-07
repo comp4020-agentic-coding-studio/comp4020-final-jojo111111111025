@@ -79,6 +79,7 @@ export interface ClientHandlers {
     enemyHealth: number;
     enemyDied: boolean;
   }) => void;
+  onObjectDepleted: (event: { objectId: string; remaining: number }) => void;
   onBeaconProgress: (progress: BeaconProgress) => void;
   onBeaconVictory: (activatedBy: string) => void;
   onError: (message: string) => void;
@@ -87,6 +88,26 @@ export interface ClientHandlers {
 
 /** Errors the server sends that explain themselves — the client should not auto-retry these; something has to change first (name, room code) or the person must wait out the reconnect grace window. */
 const TERMINAL_ERRORS = new Set(["invalid_room_code", "room_full", "superseded"]);
+
+/**
+ * Updates the depleted object's `resource.remaining` in place, wherever it
+ * lives. An `object.depleted` broadcast reaches every player in the room
+ * regardless of which zone they're standing in, so the object may be in
+ * either `world.objects` or `world.dungeon.objects` — both are checked
+ * rather than assuming it matches the local player's current zone. The
+ * object itself is never removed, even once `remaining` reaches 0 — it
+ * stays visible (render.ts draws a depleted node differently, it doesn't
+ * hide it) so a player can still see where it was and that it'll regrow.
+ */
+export function applyObjectDepleted(
+  world: (WorldMap & { dungeon: DungeonMap }) | null,
+  event: { objectId: string; remaining: number },
+): void {
+  if (!world) return;
+  const obj =
+    world.objects.find((o) => o.id === event.objectId) ?? world.dungeon.objects.find((o) => o.id === event.objectId);
+  if (obj?.resource) obj.resource.remaining = event.remaining;
+}
 
 export class GameClient {
   private socket: WebSocket | null = null;
@@ -179,6 +200,9 @@ export class GameClient {
         break;
       case "combat.event":
         this.handlers.onCombatEvent(msg);
+        break;
+      case "object.depleted":
+        this.handlers.onObjectDepleted(msg);
         break;
       case "beacon.progress":
         this.handlers.onBeaconProgress(msg);

@@ -11,7 +11,7 @@ import { RECIPES } from "../shared/recipes.js";
 import type { Building, CropStage, DungeonMap, FarmPlotState, ItemKind, MapObject, WorldMap, Zone } from "../shared/types.js";
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
 import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
-import { GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
+import { applyObjectDepleted, GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
 import { loadSprites } from "./sprites.js";
 
@@ -337,6 +337,9 @@ const client = new GameClient({
     }
     const enemy = enemies.find((e) => e.id === event.targetId);
     if (enemy) enemy.health = event.enemyHealth;
+  },
+  onObjectDepleted(event) {
+    applyObjectDepleted(world, event);
   },
   onBeaconProgress(progress) {
     beaconProgress = progress;
