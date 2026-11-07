@@ -389,26 +389,45 @@
       }
       #action-feedback {
         position: absolute;
-        top: 76px;
+        top: 84px;
         left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0, 0, 0, 0.65);
-        padding: 6px 14px;
-        border-radius: 6px;
-        font-size: 13px;
+        background: rgba(20, 20, 20, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        padding: 10px 22px;
+        border-radius: 8px;
+        font-size: 18px;
+        font-weight: 600;
         min-height: 16px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
         opacity: 0;
-        transition: opacity 0.15s;
+        transform: translateX(-50%) translateY(-6px) scale(0.92);
+        transition:
+          opacity 0.18s ease-out,
+          transform 0.18s ease-out;
         pointer-events: none;
+        z-index: 6;
+        text-align: center;
+        white-space: nowrap;
       }
       #action-feedback.show {
         opacity: 1;
+        transform: translateX(-50%) translateY(0) scale(1);
       }
       #action-feedback.err {
-        background: rgba(120, 20, 20, 0.75);
+        background: rgba(150, 25, 25, 0.92);
+        border-color: rgba(255, 140, 140, 0.5);
       }
       #action-feedback.ok {
-        background: rgba(30, 110, 50, 0.75);
+        background: rgba(25, 125, 60, 0.92);
+        border-color: rgba(140, 255, 180, 0.5);
+      }
+      @media (max-width: 480px) {
+        #action-feedback {
+          font-size: 15px;
+          padding: 8px 14px;
+          white-space: normal;
+          max-width: calc(100vw - 32px);
+        }
       }
       #beacon-panel {
         position: absolute;

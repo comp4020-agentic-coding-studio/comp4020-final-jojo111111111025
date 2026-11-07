@@ -1161,3 +1161,78 @@ neither the toast's actual on-screen appearance (timing, color, overlap
 with other HUD elements) nor the join screen's new paragraph's text
 wrapping at the box's fixed width were confirmed in a real rendered
 browser tab.
+
+### Stage 9 — a more visible action toast, and continuous background music
+
+Asked for two things: the pickup/craft/visit toast from Stage 8 wasn't
+visible enough, and the game needed background music playing continuously.
+
+**More visible toast.** Stage 8's toast had no border/shadow, a 13px font,
+centred text with the default `translateX` transform, and a 2.2s
+auto-dismiss — easy to miss against the busy game canvas behind it. Made
+it a genuinely separate object from the HUD clutter around it: larger
+text (18px, semi-bold), a visible border and drop shadow so it reads as
+a popup rather than a label, a short pop-in animation (scale + fade,
+0.18s) on every new message rather than an instant opacity snap, and a
+longer 3.2s dismiss. Re-showing the same element while a previous message
+is still visible now forces a reflow between removing and re-adding the
+`show` class, so a second message in quick succession still visibly
+"lands" with its own animation instead of silently swapping text on an
+already-fully-opaque element.
+
+**Continuous background music.** `audio.ts` grew `startBgm()`/
+`setBgmZone()` alongside the existing one-shot `playSound()`: one
+long-lived, looping `<audio>` element per zone (overworld, dungeon)
+rather than cloning a node per play the way SFX do, since there's only
+ever one BGM track playing at a time. `startBgm()` is called from the
+join button's click handler — the page's first guaranteed user
+gesture, which is what the browser's autoplay-after-gesture restriction
+requires before `play()` will actually produce sound (the same
+restriction `playSound` already works around by simply swallowing a
+rejected `play()` before that point).
+
+Two tracks, both CC0, chosen after downloading and directly comparing
+three overworld candidates on a local listening page: a calm ambience
+(TinyWorlds' Forest Ambience) for the overworld — chosen over a dreamier
+synth-pad option and an upbeat chiptune option specifically because it's
+meant to loop for an entire play session and shouldn't become
+attention-grabbing or wearing — and a cave/wind atmosphere (JaggedStone's
+Loopable Dungeon Ambience) for the dungeon, switched in and out as the
+player crosses the zone boundary.
+
+**A real pre-existing bug found and fixed while wiring zone-based
+playback, not something this stage set out to look for.** Implementing
+"switch BGM when the player's zone changes" required knowing, client-
+side, when the local player's zone actually changes — and tracing that
+turned up a genuine gap: after a successful `zone.enter`, nothing in the
+wire protocol ever told the client its own zone had changed.
+`action.result` for a `zone.enter` carries no zone field at all (just
+`ok`/`reason`), and the periodic `player.state` tick (the only other
+per-player update after the initial join) doesn't send a `zone` field
+either (confirmed against both `messages.ts`'s schema and a live
+connection's actual message stream). `localZone` was only ever set once,
+in `onSnapshot` — which only fires on join or reconnect. In a real
+browser, a player who walked into the dungeon would keep seeing (and
+server-side range checks would keep validating against) the overworld's
+objects and terrain until they happened to disconnect and rejoin; this
+had been masked because every existing automated test for zone
+transitions checks `server.room.getPlayer(...).zone` directly, never the
+browser client's own `localZone`. Fixed by having the zone-transition
+success handler (which already has the target zone on hand via
+`pendingZoneEnter`, added in Stage 8 for the toast message) update
+`localZone` and the local player's own entry in the `remotePlayers` map
+directly — the same place that now also triggers the BGM zone switch.
+
+**Testing.** `spec/audio.spec.ts` gained a `startBgm`/`setBgmZone`
+section (one looping instance per zone, idempotent on repeated
+`startBgm()` calls, switching pauses the old track and resets its
+position to the start, switching to the already-playing zone is a no-op,
+a rejected `play()` is swallowed) — the fake `Audio` class gained `loop`,
+`currentTime`, and a real `paused` flag toggled by `play()`/`pause()` to
+support these assertions, the same incremental-extension approach the
+fake has had since Stage 6.
+
+**Not yet verified:** the same browser limitation as every prior stage —
+neither the toast's new visual prominence nor the music's actual audible
+handoff between zones were confirmed in a real browser tab; both are
+confirmed by code review and the unit tests above.

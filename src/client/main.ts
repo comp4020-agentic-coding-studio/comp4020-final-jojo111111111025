@@ -10,7 +10,7 @@ import { computeCropStage, SEED_TO_CROP } from "../shared/farming.js";
 import { RECIPES } from "../shared/recipes.js";
 import type { Building, CropStage, DungeonMap, FarmPlotState, ItemKind, MapObject, WorldMap, Zone } from "../shared/types.js";
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
-import { loadSounds, playSound } from "./audio.js";
+import { loadSounds, playSound, setBgmZone, startBgm } from "./audio.js";
 import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
 import { applyObjectDepleted, findGainedItem, GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
@@ -225,9 +225,16 @@ function showActionFeedback(message: string, isError: boolean): void {
   actionFeedbackEl.textContent = message;
   actionFeedbackEl.classList.toggle("err", isError);
   actionFeedbackEl.classList.toggle("ok", !isError);
+  // Restarting the pop-in animation on a message that arrives while the
+  // previous one is still showing (classList.remove then a fresh add,
+  // rather than just re-adding "show" to an element that already has it)
+  // makes each new message visibly "land" with its own scale/fade-in, not
+  // silently swap text on an element that was already fully visible.
+  actionFeedbackEl.classList.remove("show");
+  void actionFeedbackEl.offsetWidth; // force a reflow so the class removal above actually takes effect before re-adding it
   actionFeedbackEl.classList.add("show");
   clearTimeout(actionFeedbackTimer);
-  actionFeedbackTimer = setTimeout(() => actionFeedbackEl.classList.remove("show"), 2200);
+  actionFeedbackTimer = setTimeout(() => actionFeedbackEl.classList.remove("show"), 3200);
   // Every rejected action funnels through here (see onActionResult), so this
   // is the one place that needs the error sound rather than each rejection
   // branch needing its own call.
@@ -259,6 +266,10 @@ const client = new GameClient({
         updateInventory(p.inventory);
         updateHealthUi();
         updateDeathUi();
+        // Covers both a fresh join (always overworld) and a reconnect
+        // while already in the dungeon — either way, this snapshot is the
+        // authoritative source for which zone's music should be playing.
+        setBgmZone(localZone);
       } else {
         recordRemotePlayerPosition(p.id, p.x, p.y);
       }
@@ -365,6 +376,17 @@ const client = new GameClient({
     // own message comes from the generic reason-rejection branch below).
     if (pendingZoneEnter && result.requestId === pendingZoneEnter.requestId) {
       if (result.ok) {
+        // Nothing else in the wire protocol ever tells the client its own
+        // zone changed — zone.enter's action.result carries no zone field,
+        // and the periodic player.state tick doesn't send one either (see
+        // net.ts/messages.ts). Without this, localZone (and the local
+        // player's own entry in remotePlayers, which render()'s zone
+        // filter also keys off) would silently stay on the old zone until
+        // the next full world.snapshot (join/reconnect only) caught it up
+        // — the player would keep seeing the zone they just left.
+        localZone = pendingZoneEnter.target;
+        const localEntry = remotePlayers.get(localPlayerId!);
+        if (localEntry) remotePlayers.set(localPlayerId!, { ...localEntry, zone: localZone });
         showActionFeedback(
           pendingZoneEnter.target === "dungeon" ? "Entered the dungeon." : "Returned to the overworld.",
           false,
@@ -373,6 +395,7 @@ const client = new GameClient({
         // just opened/entered something" moments, and nothing about this
         // event warrants its own dedicated sound.
         playSound("chestOpen");
+        setBgmZone(localZone);
       }
       pendingZoneEnter = null;
     }
@@ -467,6 +490,11 @@ function attemptJoin(): void {
   joinButtonEl.disabled = true;
   statusEl.textContent = "connecting…";
   client.connect(name, roomCode);
+  // The click that triggers this handler is the page's first guaranteed
+  // user gesture — starting background music here (rather than at module
+  // load, like loadSounds/loadSprites) is what lets the browser's
+  // autoplay-after-gesture restriction actually allow it to play.
+  startBgm();
 }
 
 joinButtonEl.addEventListener("click", attemptJoin);

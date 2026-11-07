@@ -13,14 +13,21 @@ class FakeAudio {
   src: string;
   preload = "";
   volume = 1;
+  loop = false;
+  currentTime = 0;
   played = 0;
+  paused = true;
   shouldReject = false;
   constructor(src: string) {
     this.src = src;
   }
   play(): Promise<void> {
     this.played++;
+    this.paused = false;
     return this.shouldReject ? Promise.reject(new Error("no user gesture yet")) : Promise.resolve();
+  }
+  pause(): void {
+    this.paused = true;
   }
   cloneNode(): FakeAudio {
     // audio.ts's playSound clones via the global Audio constructor
@@ -112,5 +119,69 @@ describe("playSound", () => {
     playSound("craftSuccess");
     const clones = instances.filter((i) => i.src.includes("craft-success"));
     expect(clones.length).toBe(3); // the original loaded node, plus two played clones
+  });
+});
+
+describe("startBgm / setBgmZone", () => {
+  it("creates one looping Audio instance per BgmZone", async () => {
+    const { startBgm } = await import("../src/client/audio.js");
+    startBgm();
+    const bgmInstances = instances.filter((i) => i.src.includes("bgm-"));
+    expect(bgmInstances.length).toBe(2);
+    for (const inst of bgmInstances) expect(inst.loop).toBe(true);
+  });
+
+  it("is safe to call more than once — doesn't create duplicate BGM instances or restart playback", async () => {
+    const { startBgm } = await import("../src/client/audio.js");
+    startBgm();
+    const overworld = instances.find((i) => i.src.includes("bgm-overworld"))!;
+    const playsAfterFirstStart = overworld.played;
+    startBgm();
+    expect(instances.filter((i) => i.src.includes("bgm-")).length).toBe(2);
+    expect(overworld.played).toBe(playsAfterFirstStart);
+  });
+
+  it("plays the overworld track by default", async () => {
+    const { startBgm } = await import("../src/client/audio.js");
+    startBgm();
+    const overworld = instances.find((i) => i.src.includes("bgm-overworld"))!;
+    expect(overworld.paused).toBe(false);
+  });
+
+  it("switching zones pauses the previous track and plays the new one", async () => {
+    const { startBgm, setBgmZone } = await import("../src/client/audio.js");
+    startBgm();
+    const overworld = instances.find((i) => i.src.includes("bgm-overworld"))!;
+    const dungeon = instances.find((i) => i.src.includes("bgm-dungeon"))!;
+    setBgmZone("dungeon");
+    expect(overworld.paused).toBe(true);
+    expect(dungeon.paused).toBe(false);
+  });
+
+  it("resets the paused track's position to the start, so re-entering a zone later doesn't resume mid-track", async () => {
+    const { startBgm, setBgmZone } = await import("../src/client/audio.js");
+    startBgm();
+    const overworld = instances.find((i) => i.src.includes("bgm-overworld"))!;
+    overworld.currentTime = 42;
+    setBgmZone("dungeon");
+    expect(overworld.currentTime).toBe(0);
+  });
+
+  it("switching to the zone that's already playing is a no-op — doesn't restart it or re-call play", async () => {
+    const { startBgm, setBgmZone } = await import("../src/client/audio.js");
+    startBgm();
+    const overworld = instances.find((i) => i.src.includes("bgm-overworld"))!;
+    const playsAfterStart = overworld.played;
+    setBgmZone("overworld");
+    expect(overworld.played).toBe(playsAfterStart);
+  });
+
+  it("swallows a rejected play() when switching zones, without throwing", async () => {
+    const { startBgm, setBgmZone } = await import("../src/client/audio.js");
+    startBgm();
+    const dungeon = instances.find((i) => i.src.includes("bgm-dungeon"))!;
+    dungeon.shouldReject = true;
+    expect(() => setBgmZone("dungeon")).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });

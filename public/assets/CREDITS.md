@@ -141,3 +141,32 @@
   congusbongus, a shorter 8-bit/chiptune-style fanfare — was evaluated
   alongside this one and not used; this orchestral fanfare was chosen
   instead for the beacon-activation victory screen.
+
+## TinyWorlds — Forest Ambience
+
+- `audio/bgm-overworld.mp3` (from `Forest_Ambience.mp3`) — from [Forest
+  Ambience](https://opengameart.org/content/forest-ambience) by
+  TinyWorlds, a single `.mp3` file, used unmodified. Loops continuously
+  while the local player is in the overworld.
+- **License: CC0.** Confirmed from the OpenGameArt page's own structured
+  "License(s)" field, which states "CC0". The author's own description on
+  the page ("It loops seamlessly and is ready to be used in your
+  projects!") was also checked before relying on `audio.ts`'s plain
+  `loop = true` to handle the repeat.
+- Two other CC0 candidates — [Heavenly Loop](https://opengameart.org/content/heavenly-loop)
+  (isaiah658, a dreamier synth-pad ambience) and [Overworld
+  Theme](https://opengameart.org/content/overworld-theme-0) (Louswan, an
+  upbeat 8-bit/chiptune melody) — were downloaded and compared directly (a
+  local listening page serving all three) before this calmer, less
+  attention-grabbing ambience track was chosen for a track meant to loop
+  for the entire length of a play session.
+
+## JaggedStone — Loopable Dungeon Ambience
+
+- `audio/bgm-dungeon.ogg` (from `dungeon_ambient_1_0.ogg`) — from
+  [Loopable Dungeon Ambience](https://opengameart.org/content/loopable-dungeon-ambience)
+  by JaggedStone, a single `.ogg` file (wind/water-drip cave atmosphere),
+  used unmodified. Loops continuously while the local player is in the
+  dungeon, replacing the overworld track for the duration.
+- **License: CC0.** Confirmed from the OpenGameArt page's own structured
+  "License(s)" field, which states "CC0".
