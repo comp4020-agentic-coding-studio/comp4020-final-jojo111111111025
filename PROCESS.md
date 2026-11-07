@@ -1040,3 +1040,58 @@ claims were confirmed by actually hearing/seeing them in a running
 browser tab; they're confirmed by unit tests against fake
 contexts/constructors instead, the same standard of evidence Stage 5
 used for its rendering math.
+
+### Stage 7 — a bigger overworld
+
+Asked for a bigger ("infinite") map. A genuinely unbounded/streamed map
+is a substantially larger change — the terrain generator's noise-and-blur
+algorithm only works over a fixed, fully-materialised grid (its smoothing
+pass reads every neighbouring cell, so it can't sample an arbitrary
+far-off coordinate on demand the way a raw Perlin/Simplex function could);
+the movement/collision code hard-clamps players to a fixed-size tile
+array; resource-node depletion persistence assumes a known, finite set of
+objects generated once at world creation; and the full tile grid is sent
+to the client as one `world.snapshot` message on join/reconnect, with no
+chunked/paginated loading. All four would need to change together for a
+true streaming world. Asked which to do, the answer was the simplest
+option: keep the existing fixed-grid architecture entirely as-is, just
+make the fixed grid itself bigger — no new systems, same generation
+algorithm, same wire protocol shape.
+
+`MAP_WIDTH`/`MAP_HEIGHT` went from 64x64 to 128x128 (4x the area). Checked
+before committing to the new size: generation time barely moves (11ms at
+64x64, 11ms at 128x128 — the algorithm is linear in cell count, not
+exponential), and the full `world.snapshot` payload — the thing that
+actually scales with map size, since it's sent whole on every join/
+reconnect — grows from ~113KB to a measured 430KB over a real connection,
+still a reasonable one-time payload for a message sent only on join or
+reconnect, not per tick. Dungeon size, enemy spawn positions, dungeon
+entrance placement, and every other system are unaffected — they're
+either already computed relative to the map's own dimensions
+(`findDungeonEntrance`'s "pick the furthest rock tile from the campsite"
+heuristic) or structurally independent of overworld size (the dungeon is
+always a fixed 16x16 regardless of overworld dimensions).
+
+**A real test bug this exposed, not a game bug.**
+`spec/dungeon-terrain.spec.ts`'s border-wall-collision test used to walk a
+player from spawn to the dungeon entrance with a deliberately naive
+walker — "always step toward the target," no obstacle-avoidance, driven
+entirely through real `Room.tick()` calls to exercise genuine
+collision. At the old 64x64 size this always happened to find a clear-
+enough path; at 128x128, the real seeded terrain generator produced a
+large enough contiguous rock/water formation between spawn and a
+far-flung dungeon entrance that the naive walker could wedge itself into
+a concave pocket — blocked on every tried axis at once — and never
+escape, confirmed by letting it run for 10,000+ ticks with no progress.
+This is a limitation of the test's own toy walker, not of the actual
+collision logic (`isBlocked`/`isCellBlocked`), which was never in
+question — every other test in this file, including the one that
+positively asserts the wall actually blocks movement, still passed. Fixed
+by giving this one test the same kind of small, synthetic, all-grass
+overworld fixture `zone.spec.ts`'s tests already use instead of the real
+procedurally-generated terrain, with the dungeon entrance placed right
+next to spawn — it still exercises the real generated dungeon (pulled
+from a throwaway tiny `generateWorldMap()` call, since the dungeon's
+dimensions don't depend on the overworld's), just without depending on a
+specific seed's terrain layout being navigable by a non-pathfinding
+walker.

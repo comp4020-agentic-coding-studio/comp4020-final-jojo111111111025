@@ -1,7 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import { generateWorldMap } from "../src/shared/map.js";
+import type { WorldMap } from "../src/shared/types.js";
 import { SOLID_TERRAIN } from "../src/shared/types.js";
+
+/**
+ * A small, all-grass synthetic overworld with the dungeon entrance placed
+ * right next to the spawn point, keeping the real generated dungeon (whose
+ * dungeon_wall/dungeon_floor border is what this file's "cannot walk past
+ * the border wall" test actually exercises) — same approach as
+ * zone.spec.ts's makeTestMap. This test only needs a quick, reliable walk
+ * from spawn to the entrance, not the real noise-based terrain generator's
+ * overworld output: a production-size (or even a small but seed-generated)
+ * overworld can place contiguous rock/water formations between spawn and
+ * the entrance that a straight-line "always step toward target" walker
+ * (not real pathfinding) can wedge itself into permanently, which is a
+ * limitation of this test's own walker, not of the collision logic under
+ * test. generateWorldMap's own dungeon is identical regardless of the
+ * overworld dimensions passed in, so a throwaway tiny overworld is used
+ * purely to get that real dungeon cheaply, then everything overworld-side
+ * is replaced.
+ */
+function makeOverworldWithNearbyEntrance(): WorldMap {
+  const { dungeon } = generateWorldMap("throwaway-for-dungeon-only", 4, 4);
+  const width = 10;
+  const height = 10;
+  const tiles = Array.from({ length: width * height }, () => ({ terrain: "grass" as const }));
+  return {
+    seed: "test",
+    width,
+    height,
+    tiles,
+    objects: [{ id: "entrance-1", kind: "dungeon_entrance", x: 2, y: 1, zone: "overworld" }],
+    campsite: { x: 1, y: 1 },
+    spawnPoint: { x: 1, y: 1 },
+    farmArea: { x: 0, y: 0, width: 0, height: 0 },
+    dungeonEntrance: { x: 2, y: 1 },
+    dungeon,
+  };
+}
 
 /**
  * Regression test for a real pre-existing bug found while auditing the
@@ -40,13 +77,12 @@ describe("dungeon wall collision", () => {
   });
 
   it("a player cannot walk past the dungeon's border wall, driven entirely through Room.tick", () => {
-    const map = generateWorldMap("wall-collision-test-seed");
+    const map = makeOverworldWithNearbyEntrance();
     const room = new Room(map);
     room.addPlayer("p1", "Alice");
 
     // Walk to the dungeon's entry point (one tile inside the border, per
     // generateDungeon), then keep pushing further into the wall.
-    const player = room.getPlayer("p1")!;
     const entered = room.enterZone(
       "p1",
       // The overworld-side entrance object always exists in a real generated map.

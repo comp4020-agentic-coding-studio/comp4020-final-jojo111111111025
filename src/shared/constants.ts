@@ -1,6 +1,6 @@
 export const TILE_SIZE = 16;
-export const MAP_WIDTH = 64;
-export const MAP_HEIGHT = 64;
+export const MAP_WIDTH = 128;
+export const MAP_HEIGHT = 128;
 
 export const TICK_RATE_HZ = 20;
 export const TICK_MS = 1000 / TICK_RATE_HZ;
