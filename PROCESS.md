@@ -1095,3 +1095,69 @@ from a throwaway tiny `generateWorldMap()` call, since the dungeon's
 dimensions don't depend on the overworld's), just without depending on a
 specific seed's terrain layout being navigable by a non-pathfinding
 walker.
+
+### Stage 8 — pickup/craft/visit toasts and a fuller intro
+
+Asked for a visible toast when the player picks something up, crafts
+something, or visits a new zone (the dungeon/overworld), and a proper
+game introduction on the join screen.
+
+**Unified toast.** `showActionFeedback` was already the one place every
+rejected action surfaces a message (a small toast near the top of the
+screen, auto-dismissing after 2.2s) — it just never fired for anything
+that succeeded. Rather than building a second notification system, it
+now takes success messages too: a green-tinted variant (`.ok`, alongside
+the existing red `.err`) for a positive confirmation, so a success and a
+rejection are visually distinct at a glance without needing separate
+styling.
+
+Three events now route through it:
+
+- **Gather.** The server's gather result doesn't say which resource kind
+  was granted — `objectRemaining` is the only signal that this was a
+  gather at all (see Stage 6's object-depleted-sync work for how that
+  signal was established). The specific item is derived client-side by
+  diffing the post-gather inventory against a pre-update snapshot
+  (`findGainedItem`, extracted into `net.ts` — the same "pure logic out
+  of main.ts's DOM-bound closure, into the one client module with no
+  top-level DOM code" move Stage 6 used for `applyObjectDepleted`, for
+  the same reason: `main.ts` can't be imported in this project's node
+  test environment).
+- **Craft/build.** Already had its own message in the crafting panel's
+  own small text line (`craftFeedbackEl`); now also surfaces the same
+  "Crafted/Placed {name}." line as a toast, so the confirmation isn't
+  only visible to someone looking at the crafting panel specifically.
+- **Zone transition (dungeon entrance/exit).** Unlike gather and craft,
+  a successful `zone.enter` carries no distinguishing field at all in its
+  `action.result` — not even an echo of which zone it entered. Rather
+  than add a new server field for this, the client tracks the one
+  zone-transition request it has in flight (`pendingZoneEnter`: the
+  `requestId` it just sent and which zone it was headed to) and matches
+  the result's `requestId` against it when the reply arrives, clearing
+  the pending state either way (success or rejection) so a failed
+  attempt doesn't leave a stale pending transition around to falsely
+  match a later, unrelated result.
+
+**Game introduction.** The join screen's one-line summary became a short
+paragraph: the two-to-four-player premise, the day/night gather-craft-farm
+loop, and the dungeon-boss-beacon win condition — matching what
+`README.md`'s own opening paragraph already says, so the in-game and
+repository descriptions of the game stay consistent with each other.
+
+**Testing.** `spec/pickup-feedback.spec.ts` covers `findGainedItem`
+directly (which kind wins when exactly one increases, when nothing
+increases, when a count decreases without anything increasing, when a
+craft's consumed input and granted output change in the same inventory).
+The toast's own DOM behaviour (CSS class toggling, the show/hide timer)
+isn't separately unit-tested — `main.ts` can't be imported in this
+project's test environment for the same browser/DOM reasons recorded in
+Stage 6's testing note, and `showActionFeedback`'s class-toggle logic is
+a few straightforward lines already covered by the project's standing
+"no real browser available" caveat below, not a new testing gap this
+stage introduced.
+
+**Not yet verified:** the same browser limitation as every prior stage —
+neither the toast's actual on-screen appearance (timing, color, overlap
+with other HUD elements) nor the join screen's new paragraph's text
+wrapping at the box's fixed width were confirmed in a real rendered
+browser tab.

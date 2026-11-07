@@ -1,4 +1,5 @@
 import type { Building, DungeonMap, FarmPlotState, ItemKind, WorldMap, Zone } from "../shared/types.js";
+import { ITEM_KINDS } from "../shared/types.js";
 
 export interface SnapshotPlayer {
   id: string;
@@ -107,6 +108,23 @@ export function applyObjectDepleted(
   const obj =
     world.objects.find((o) => o.id === event.objectId) ?? world.dungeon.objects.find((o) => o.id === event.objectId);
   if (obj?.resource) obj.resource.remaining = event.remaining;
+}
+
+/**
+ * Finds which ItemKind increased between a pre-gather inventory snapshot
+ * and a gather's resulting inventory, for the pickup toast's "Gathered
+ * {item}." message — a player.interact (gather) result's `inventory`
+ * field never says which resource kind was granted on its own (see
+ * room.ts's doInteract), so it's derived by diffing. Returns undefined if
+ * nothing increased (shouldn't happen for a successful gather, but a
+ * caller showing a generic fallback message is cheaper than this function
+ * asserting an invariant it can't enforce).
+ */
+export function findGainedItem(
+  before: Record<ItemKind, number>,
+  after: Record<ItemKind, number>,
+): ItemKind | undefined {
+  return ITEM_KINDS.find((kind) => (after[kind] ?? 0) > (before[kind] ?? 0));
 }
 
 export class GameClient {

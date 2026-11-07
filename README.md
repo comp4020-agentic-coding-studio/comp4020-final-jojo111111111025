@@ -39,6 +39,9 @@ server issues on first load.
 - The player list at the top shows everyone in the room and whether
   they're connected or just holding their slot during a reconnect grace
   window.
+- A short toast near the top of the screen confirms a gather ("Gathered
+  wood."), a craft/build ("Crafted axe."), or a zone transition ("Entered
+  the dungeon.") — green for a success, red for a rejection.
 
 ## Identity and authorization
 

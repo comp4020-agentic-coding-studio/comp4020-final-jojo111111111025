@@ -12,7 +12,7 @@ import type { Building, CropStage, DungeonMap, FarmPlotState, ItemKind, MapObjec
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
 import { loadSounds, playSound } from "./audio.js";
 import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
-import { applyObjectDepleted, GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
+import { applyObjectDepleted, findGainedItem, GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
 import { loadSprites } from "./sprites.js";
 
@@ -120,6 +120,17 @@ let lastChestItems: Record<ItemKind, number> = emptyInventory();
 let beaconOpen = false;
 let victoryShown = false;
 
+/**
+ * action.result carries no field distinguishing a successful zone.enter
+ * from any other bare `{ok: true}` action result — unlike gather
+ * (objectRemaining) or craft (recipeId), there's nothing in the payload
+ * itself to key off of. Tracking the one in-flight zone-transition
+ * requestId (and which zone it was headed to) lets onActionResult
+ * recognise "this specific success is the zone transition I just asked
+ * for" without needing a new server field.
+ */
+let pendingZoneEnter: { requestId: string; target: Zone } | null = null;
+
 function serverNow(): number {
   return Date.now() + serverTimeOffsetMs;
 }
@@ -148,6 +159,21 @@ const ERROR_MESSAGES: Record<string, string> = {
   room_full: "This room already has 4 players.",
   superseded: "You joined from another tab or window.",
   not_joined: "You need to join the room first.",
+};
+
+/**
+ * Human-readable names for the gather-pickup toast (showActionFeedback's
+ * "Gathered {item}." message). A gather only ever grants one of these
+ * three raw ResourceKinds (see room.ts's doInteract: `object.resource.kind`
+ * is typed `ResourceKind`, never a crafted ItemKind) — kept as a
+ * `Partial<Record<ItemKind, string>>` rather than `Record<ResourceKind,
+ * string>` so the lookup by a plain `ItemKind` string in onActionResult
+ * doesn't need a separate narrowing step.
+ */
+const ITEM_LABELS: Partial<Record<ItemKind, string>> = {
+  wood: "wood",
+  stone: "stone",
+  berries: "berries",
 };
 
 /**
@@ -198,6 +224,7 @@ let actionFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
 function showActionFeedback(message: string, isError: boolean): void {
   actionFeedbackEl.textContent = message;
   actionFeedbackEl.classList.toggle("err", isError);
+  actionFeedbackEl.classList.toggle("ok", !isError);
   actionFeedbackEl.classList.add("show");
   clearTimeout(actionFeedbackTimer);
   actionFeedbackTimer = setTimeout(() => actionFeedbackEl.classList.remove("show"), 2200);
@@ -304,23 +331,50 @@ const client = new GameClient({
     nightIndicatorEl.style.display = isNight ? "block" : "none";
   },
   onActionResult(result) {
+    const prevInventory = myInventory;
     if (result.ok && result.inventory) {
       updateInventory(result.inventory);
     }
     // objectRemaining is only ever set by a player.interact (gather) result
     // — see net.ts's handling of that message type — so its presence is
     // the signal that this is a successful gather, not some other action
-    // that also happens to carry an inventory.
+    // that also happens to carry an inventory. The server doesn't say
+    // which resource kind was granted, so it's derived here from whichever
+    // inventory slot increased relative to the pre-update snapshot above.
     if (result.ok && result.objectRemaining !== undefined) {
       playSound("gather");
+      const gained = result.inventory ? findGainedItem(prevInventory, result.inventory) : undefined;
+      showActionFeedback(gained ? `Gathered ${ITEM_LABELS[gained] ?? gained}.` : "Gathered a resource.", false);
     }
     if (result.recipeId) {
       const recipe = RECIPES[result.recipeId as keyof typeof RECIPES];
       const isBuilding = recipe?.output.type === "building";
+      const label = recipe?.name ?? result.recipeId;
       craftFeedbackEl.textContent = result.ok
-        ? `${isBuilding ? "Placed" : "Crafted"} ${recipe?.name ?? result.recipeId}.`
+        ? `${isBuilding ? "Placed" : "Crafted"} ${label}.`
         : `Can't ${isBuilding ? "build" : "craft"}: ${ACTION_REASON_MESSAGES[result.reason ?? ""] ?? result.reason}`;
-      if (result.ok) playSound("craftSuccess");
+      if (result.ok) {
+        playSound("craftSuccess");
+        showActionFeedback(`${isBuilding ? "Placed" : "Crafted"} ${label}.`, false);
+      }
+    }
+    // zone.enter's success carries no distinguishing field of its own (see
+    // pendingZoneEnter's doc-comment) — match this result's requestId
+    // against the one transition request currently in flight, and clear it
+    // either way (a rejection, e.g. too_far, still ends this attempt; its
+    // own message comes from the generic reason-rejection branch below).
+    if (pendingZoneEnter && result.requestId === pendingZoneEnter.requestId) {
+      if (result.ok) {
+        showActionFeedback(
+          pendingZoneEnter.target === "dungeon" ? "Entered the dungeon." : "Returned to the overworld.",
+          false,
+        );
+        // Reuses chestOpen rather than fetching a new clip — both are "you
+        // just opened/entered something" moments, and nothing about this
+        // event warrants its own dedicated sound.
+        playSound("chestOpen");
+      }
+      pendingZoneEnter = null;
     }
     if (result.chestItems) {
       lastChestItems = result.chestItems;
@@ -802,7 +856,9 @@ function performInteract(): void {
   const zoneObj = nearestZoneTransition();
   if (zoneObj) {
     const target: Zone = localZone === "overworld" ? "dungeon" : "overworld";
-    client.enterZone(zoneObj.id, target, crypto.randomUUID());
+    const requestId = crypto.randomUUID();
+    pendingZoneEnter = { requestId, target };
+    client.enterZone(zoneObj.id, target, requestId);
   }
 }
 
