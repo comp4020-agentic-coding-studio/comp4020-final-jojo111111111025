@@ -108,6 +108,14 @@ small yellow/blue marker on the ground beneath each player's feet, since
 the shared character sprite itself carries no colour of its own; see
 `PROCESS.md`'s Stage 3 section for the full reasoning.
 
+Landing a hit flashes the enemy white and shakes the screen; taking damage
+flashes the screen red and shakes it too. Seven CC0 sound effects (combat,
+gathering, crafting, chest, errors, and a beacon-activation victory
+fanfare) play at their matching moments — see `PROCESS.md`'s Stage 6
+section for which clip plays on which event and why two evaluated clips
+(a sword-clash sound with no mechanic to attach to, and a footstep-loop
+set) aren't used yet.
+
 ## Persistence
 
 Everything survives a restart: the world seed and resource depletion,

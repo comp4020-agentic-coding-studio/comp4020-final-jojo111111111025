@@ -958,3 +958,85 @@ neighbouring map data, rather than a fixed sprite-to-kind lookup — correct
 behaviour here depends on the real map generator's actual terrain
 layout meeting this logic at render time, which only an actual rendered,
 interactive frame can confirm.
+
+### Stage 6 — hit feedback and sound effects
+
+Asked directly what would move this project closer to a commercial
+game's feel, the single most-cited gap was that combat and action
+outcomes read as pure number changes — a health bar ticking down, an
+inventory count updating — with no other visible or felt reaction. This
+stage closes that gap in two parts: client-side hit feedback (no new
+assets, no protocol change) and a first pass of sound effects (new CC0
+audio assets, wired to specific events).
+
+**Hit feedback.** `drawEnemy()` tints an enemy white for a short window
+right after a `combat.event` names it as the target (`RenderEnemy`'s new
+optional `flashing` field, set from a per-enemy timestamp in `main.ts`,
+never sent by the server). `render()` takes an optional screen-space
+`shakeOffset`, applied to the camera origin so the whole scene — terrain,
+objects, enemies, players, highlights — judders together; `main.ts` drives
+it from a short decaying trigger: landing a hit shakes a little, a kill
+shakes more, taking damage shakes a little too. The existing red
+damage-flash overlay, previously triggered only on the instant a player
+died, now fires on any health drop — dying is one instance of taking
+damage, not a separate category of feedback.
+
+**Sound effects.** New `src/client/audio.ts` module, same load-once,
+fail-silently shape as `sprites.ts`'s image loading: a clip that hasn't
+finished loading (or never loads) just doesn't play, nothing else in the
+game blocks on it. `playSound()` clones the loaded `HTMLAudioElement`
+before playing it, so two overlapping triggers of the same sound (e.g.
+two gather hits landing close together) are both heard rather than the
+second cutting the first off.
+
+Eight CC0-licensed clips were downloaded and evaluated; seven are used:
+
+- Combat: a sword-attack hit (StarNinjas) on landing a melee hit, a death
+  sound (MrGrs) on the local player dying.
+- Gathering and crafting: a coin-pickup sound (StarNinjas) on a successful
+  gather, an interface confirmation chime (Kenney) on a successful craft
+  or build, an interface open sound (Kenney) on opening a chest.
+- Feedback: an interface error sound (Kenney) at the single place every
+  rejected action already funnels through (`showActionFeedback`), so no
+  rejection reason needs its own call site.
+- Victory: an orchestral fanfare (cynicmusic, ~12s) on beacon activation.
+  A second CC0 candidate — a shorter NES/chiptune-style fanfare
+  (congusbongus) — was downloaded and compared directly (a local listening
+  page serving both files) before this one was chosen.
+
+Not used: the same sword pack's 10-variant "clash" sound effect (intended
+for a block/parry mechanic this game doesn't have — downloaded and
+evaluated, but nothing in the game's combat model gives it a place to
+attach to) and a 10-sample footstep-loop set from Kenney's RPG Audio pack
+(looping footsteps on a fixed cadence as the player moves is a real
+feature, just a materially more complex one — timing a loop interval off
+movement rather than firing once per discrete event — deliberately left
+for a later pass rather than implemented half-way).
+
+Every clip's licence was confirmed from the OpenGameArt page's own
+structured "License(s)" field (all state CC0), with two packs (Kenney's
+Interface Sounds, mirrored via OpenGameArt, and the original RPG Audio
+pack also downloaded during this stage's research but not used) carrying
+a second, independent confirmation: their own bundled `License.txt`
+states the same thing in its own words. See `public/assets/CREDITS.md`
+for the full per-file source, author, and licence text.
+
+**Testing.** `spec/enemy-flash.spec.ts` and `spec/screen-shake.spec.ts`
+exercise the new `drawEnemy`/`render()` branches against a fake
+`CanvasRenderingContext2D`, the same technique every prior rendering
+stage's tests use. `spec/audio.spec.ts` stubs the global `Audio`
+constructor (`vi.stubGlobal`) with a fake class that records every
+instance created and every `play()` call, rather than mocking
+`src/client/audio.js` itself — this exercises `loadSounds()`/`playSound()`
+as real code paths (which path maps to which clip, cloning before
+playing, swallowing a rejected `play()` from a browser's
+no-user-gesture-yet restriction) instead of asserting against a mock of
+its own logic.
+
+**Not yet verified:** the same browser limitation as every prior stage
+(no working Chromium in this environment — see Stage 5's note for the
+exact missing libraries) means none of this stage's audio or feedback
+claims were confirmed by actually hearing/seeing them in a running
+browser tab; they're confirmed by unit tests against fake
+contexts/constructors instead, the same standard of evidence Stage 5
+used for its rendering math.

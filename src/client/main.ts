@@ -10,6 +10,7 @@ import { computeCropStage, SEED_TO_CROP } from "../shared/farming.js";
 import { RECIPES } from "../shared/recipes.js";
 import type { Building, CropStage, DungeonMap, FarmPlotState, ItemKind, MapObject, WorldMap, Zone } from "../shared/types.js";
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
+import { loadSounds, playSound } from "./audio.js";
 import { InterpolationBuffer, renderTimeFor } from "./interpolation.js";
 import { applyObjectDepleted, GameClient, type BeaconProgress, type SnapshotEnemy } from "./net.js";
 import { render, type RenderEnemy, type RenderPlayer } from "./render.js";
@@ -22,6 +23,7 @@ const ctx = canvas.getContext("2d")!;
 // since resizing the canvas's backing store resets all 2D context state
 // including this flag — a one-time set here would be lost on first resize.)
 void loadSprites(); // starts loading immediately; frame() tolerates not-yet-loaded sheets (see sprites.ts/render.ts's fallback colors)
+loadSounds(); // starts loading immediately; playSound() tolerates not-yet-loaded (or never-loaded) clips the same way
 const statusEl = document.getElementById("status")!;
 const promptEl = document.getElementById("prompt")!;
 const zonePromptEl = document.getElementById("zone-prompt")!;
@@ -199,6 +201,10 @@ function showActionFeedback(message: string, isError: boolean): void {
   actionFeedbackEl.classList.add("show");
   clearTimeout(actionFeedbackTimer);
   actionFeedbackTimer = setTimeout(() => actionFeedbackEl.classList.remove("show"), 2200);
+  // Every rejected action funnels through here (see onActionResult), so this
+  // is the one place that needs the error sound rather than each rejection
+  // branch needing its own call.
+  if (isError) playSound("actionError");
 }
 
 let hasJoinedOnce = false;
@@ -276,6 +282,7 @@ const client = new GameClient({
           flashDamage();
           triggerShake(3);
         }
+        if (wasAlive && !p.alive) playSound("death");
         updateDeathUi();
       } else {
         recordRemotePlayerPosition(p.id, p.x, p.y);
@@ -300,12 +307,20 @@ const client = new GameClient({
     if (result.ok && result.inventory) {
       updateInventory(result.inventory);
     }
+    // objectRemaining is only ever set by a player.interact (gather) result
+    // — see net.ts's handling of that message type — so its presence is
+    // the signal that this is a successful gather, not some other action
+    // that also happens to carry an inventory.
+    if (result.ok && result.objectRemaining !== undefined) {
+      playSound("gather");
+    }
     if (result.recipeId) {
       const recipe = RECIPES[result.recipeId as keyof typeof RECIPES];
       const isBuilding = recipe?.output.type === "building";
       craftFeedbackEl.textContent = result.ok
         ? `${isBuilding ? "Placed" : "Crafted"} ${recipe?.name ?? result.recipeId}.`
         : `Can't ${isBuilding ? "build" : "craft"}: ${ACTION_REASON_MESSAGES[result.reason ?? ""] ?? result.reason}`;
+      if (result.ok) playSound("craftSuccess");
     }
     if (result.chestItems) {
       lastChestItems = result.chestItems;
@@ -349,7 +364,10 @@ const client = new GameClient({
     // Every hit on this enemy shakes the screen a little, win or lose — a
     // kill shakes harder, a visible exclamation point on top of the health
     // bar reaching zero.
-    if (event.attackerId === localPlayerId) triggerShake(event.enemyDied ? 5 : 2.5);
+    if (event.attackerId === localPlayerId) {
+      triggerShake(event.enemyDied ? 5 : 2.5);
+      playSound("swordAttack");
+    }
   },
   onObjectDepleted(event) {
     applyObjectDepleted(world, event);
@@ -364,6 +382,7 @@ const client = new GameClient({
     victoryDetailEl.textContent =
       activatedBy === localPlayerId ? "You lit the beacon." : "A fellow survivor lit the beacon.";
     victoryScreenEl.style.display = "flex";
+    playSound("victory");
   },
   onError(message) {
     const friendly = ERROR_MESSAGES[message] ?? `Error: ${message}`;
@@ -617,6 +636,7 @@ function openChest(chestId: string): void {
   lastChestItems = emptyInventory();
   chestPanelEl.style.display = "block";
   renderChestPanel();
+  playSound("chestOpen");
 }
 
 function closeChest(): void {

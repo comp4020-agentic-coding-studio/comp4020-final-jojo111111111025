@@ -1,4 +1,4 @@
-# Art asset credits
+# Art and audio asset credits
 
 ## ansimuz — Tiny RPG Forest & Mountain
 
@@ -82,3 +82,62 @@
   animation system (explicitly out of scope), and the rock candidate was
   not evaluated against the existing `rock` terrain/object decisions in
   this pass.
+
+## Kenney — Interface Sounds
+
+- `audio/craft-success.ogg` (from `confirmation_001.ogg`), `audio/chest-open.ogg`
+  (from `open_002.ogg`), `audio/action-error.ogg` (from `error_002.ogg`) — from
+  the [Interface Sounds](https://opengameart.org/content/interface-sounds) pack
+  by Kenney (www.kenney.nl), 104-file download (`kenney_interfaceSounds.zip`,
+  mirrored on OpenGameArt), file `Audio/confirmation_001.ogg` /
+  `Audio/open_002.ogg` / `Audio/error_002.ogg` respectively. Each file is used
+  unmodified.
+- **License: CC0.** Public domain, free for personal or commercial use, no
+  attribution required. Confirmed from two independent sources: (1) the
+  OpenGameArt page's own structured "License(s)" field states "CC0"; (2) the
+  zip's own bundled `License.txt` states the same in its own words
+  ("Creative Commons Zero, CC0 ... free to use in personal, educational and
+  commercial projects").
+
+## StarNinjas — sword and coin sound effects
+
+- `audio/sword-attack.ogg` (from `sword.3.ogg`) — from [20 Sword Sound
+  Effects (Attacks and
+  Clashes)](https://opengameart.org/content/20-sword-sound-effects-attacks-and-clashes)
+  by StarNinjas, one of ten attack variants in the pack's
+  `sword_-_starninjas_1.zip`, used unmodified. The pack's other ten
+  variants, and its separate ten-variant `sword_clash_-_starninjas_0.zip`
+  (a block/parry-style clash sound), were downloaded and evaluated but are
+  **not** used — the game has no block/parry mechanic for the clash sound
+  to attach to.
+- `audio/gather.ogg` (from `coin.7.ogg`) — from [12 Coin Sound
+  Effects](https://opengameart.org/content/12-coin-sound-effects) by the same
+  author, file `coins_-_starninjas.zip`, one of twelve variants used
+  unmodified.
+- **License: CC0.** Confirmed from the OpenGameArt page's own structured
+  "License(s)" field on each of the two pages, which states "CC0" with a
+  link to the CC0 1.0 deed. No bundled license file ships inside these
+  particular zips — the page's own structured field is the evidence here, the
+  same standard already used for Stage 4's bush sprite's itch.io field.
+
+## MrGrs — Dead Sound Effect
+
+- `audio/death.ogg` (from `deadsound.ogg`) — from [Dead Sound
+  Effect](https://opengameart.org/content/dead-sound-effect) by MrGrs, a
+  single `.ogg` file, used unmodified.
+- **License: CC0.** Confirmed from the OpenGameArt page's own structured
+  "License(s)" field, which states "CC0".
+
+## cynicmusic — Victory Fanfare Short
+
+- `audio/victory.wav` (from `Heavy_ConceptB.wav`) — from [Victory Fanfare
+  Short](https://opengameart.org/content/victory-fanfare-short) by
+  cynicmusic, a single `.wav` file (~12s orchestral fanfare), used
+  unmodified.
+- **License: CC0.** Confirmed from the OpenGameArt page's own structured
+  "License(s)" field, which states "CC0".
+- A second CC0 candidate — [Glorious victory fanfare
+  NES](https://opengameart.org/content/glorious-victory-fanfare-nes) by
+  congusbongus, a shorter 8-bit/chiptune-style fanfare — was evaluated
+  alongside this one and not used; this orchestral fanfare was chosen
+  instead for the beacon-activation victory screen.
