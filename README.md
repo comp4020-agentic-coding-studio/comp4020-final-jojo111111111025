@@ -29,9 +29,16 @@ server issues on first load.
   what was lost. This applies however you died — a wanderer's bite, the
   boss's slam, anything that brings your health to 0.
 
-- WASD/arrow keys move; `E` gathers from a nearby resource node or
-  interacts with a dungeon entrance/exit, depending on what's in range;
-  `Space` attacks the nearest adjacent enemy.
+- WASD/arrow keys move; `E` gathers from a nearby resource node; `Space`
+  attacks the nearest adjacent enemy; `H` uses a bandage from your
+  inventory.
+- Crafted tools aren't equipped — holding one in your inventory is enough
+  for its effect to apply automatically. A sword adds `SWORD_BONUS_DAMAGE`
+  to every attack; an axe doubles wood yield per gather (from a tree); a
+  pickaxe doubles stone yield per gather (from a rock). A bandage (made
+  from berries) is a consumable: pressing `H` with at least one in your
+  inventory spends it to restore `BANDAGE_HEAL_AMOUNT` health, capped at
+  full health.
 - The crafting panel (bottom right) lists every recipe with its cost; the
   "Craft" button is disabled client-side when you can't afford it, but the
   server re-validates every request regardless.
@@ -39,16 +46,11 @@ server issues on first load.
   front of you, with a coloured ring on the map showing exactly which cell
   before you click — green if it's free, orange if something's already
   there; `C` opens the nearest shared storage chest.
-- Standing near a farm plot shows plant/water/harvest buttons for its
-  current stage.
 - A day/night cycle (derived from elapsed wall-clock time, never a stored
-  "current phase") brings out aggressive wanderers at night — and night
-  itself gets harder as it goes on: ten extra wanderers spawn the instant
-  it falls (gone again at dawn), and every wanderer moves faster, notices
-  players from further away, and respawns quicker for the night's
-  duration. A dungeon holds a telegraphed boss fight. Defeating the boss
-  and depositing enough wood, stone, and the boss's ancient core at the
-  beacon activates it — the room's shared win condition.
+  "current phase") darkens the screen and, since enemies chase
+  unconditionally from the moment they exist, gives wanderers (not
+  guardians or the boss) a real edge at night: they move 50% faster for
+  the night's duration, then drop back to their normal speed at dawn.
 - The player list at the top shows everyone in the room and whether
   they're connected or just holding their slot during a reconnect grace
   window.

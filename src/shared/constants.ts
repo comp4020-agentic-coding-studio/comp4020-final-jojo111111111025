@@ -34,9 +34,19 @@ export const SWORD_BONUS_DAMAGE = 15;
 export const ATTACK_RANGE_TILES = 1.2;
 export const ATTACK_COOLDOWN_MS = 600;
 
-// --- Day/night (visual/ambience only — see room.ts's tickEnemy: every
-// enemy aggros regardless of time of day as of the "kill everything to
-// win" redesign) ---------------------------------------------------------
+/** How much health a bandage restores (clamped at MAX_HEALTH, never wasted on overheal beyond that). */
+export const BANDAGE_HEAL_AMOUNT = 30;
+
+/** Per-gather yield for wood/stone — doubled while holding the matching tool (axe for wood, pickaxe for stone). */
+export const BASE_GATHER_YIELD = 1;
+export const AXE_WOOD_YIELD = 2;
+export const PICKAXE_STONE_YIELD = 2;
+
+// --- Day/night (every enemy aggros unconditionally regardless of time of
+// day, since the "kill everything to win" redesign — see room.ts's
+// tickEnemy. The one gameplay effect night still has is
+// WANDERER_NIGHT_SPEED_MULTIPLIER, above; everything else here is purely
+// visual/ambience.) ----------------------------------------------------
 
 /**
  * Time-of-day is derived purely from elapsed wall-clock time since the
@@ -51,8 +61,10 @@ export const DAY_NIGHT_CYCLE_MS = DAY_DURATION_MS + NIGHT_DURATION_MS;
 
 export const WANDERER_MAX_HEALTH = 30;
 export const WANDERER_CONTACT_DAMAGE = 5;
-/** Slower than every other enemy and well under the player's own 4 tiles/sec — every enemy chases unconditionally the instant it exists (no aggro range, no leash, no day/night passivity), so a low chase speed is what keeps a wanderer escapable on foot rather than an inevitable hit. */
+/** Slower than every other enemy and well under the player's own 4 tiles/sec — every enemy chases unconditionally the instant it exists (no aggro range, no leash), so a low chase speed is what keeps a wanderer escapable on foot rather than an inevitable hit. */
 export const WANDERER_SPEED_TILES_PER_SEC = 1;
+/** Wanderers alone move faster at night — the one piece of day/night that isn't purely visual/ambience (see the block comment above). Guardians and the boss are unaffected. */
+export const WANDERER_NIGHT_SPEED_MULTIPLIER = 1.5;
 export const CAMPFIRE_SAFE_RADIUS_TILES = 3;
 
 export const GUARDIAN_MAX_HEALTH = 60;

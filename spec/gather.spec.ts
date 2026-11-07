@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
-import type { WorldMap } from "../src/shared/types.js";
+import { AXE_WOOD_YIELD, PICKAXE_STONE_YIELD } from "../src/shared/constants.js";
+import { emptyInventory, type WorldMap } from "../src/shared/types.js";
 
 /**
  * Ticks the room, steering playerId toward (targetX, targetY), stopping once
@@ -45,6 +46,20 @@ function makeTestMap(): WorldMap {
         kind: "campfire",
         x: 1,
         y: 1,
+      },
+      {
+        id: "tree-1",
+        kind: "tree",
+        x: 5,
+        y: 5,
+        resource: { kind: "wood", remaining: 10, maxRemaining: 10 },
+      },
+      {
+        id: "rock-1",
+        kind: "rock",
+        x: 7,
+        y: 8,
+        resource: { kind: "stone", remaining: 10, maxRemaining: 10 },
       },
     ],
     campsite: { x: 1, y: 1 },
@@ -133,5 +148,82 @@ describe("Room.interact (gathering)", () => {
 
     room.interact("p1", "bush-1", "req-1");
     expect(calls).toEqual([{ objectId: "bush-1", remaining: 0 }]);
+  });
+});
+
+describe("Room.interact — tool-boosted gather yield", () => {
+  it("grants only 1 wood per gather from a tree without an axe", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice");
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+
+    const result = room.interact("p1", "tree-1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.inventory?.wood).toBe(1);
+    expect(result.objectRemaining).toBe(9); // one node charge consumed regardless of yield
+  });
+
+  it(`grants AXE_WOOD_YIELD (${AXE_WOOD_YIELD}) wood per gather from a tree while holding an axe`, () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), axe: 1 });
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+
+    const result = room.interact("p1", "tree-1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.inventory?.wood).toBe(AXE_WOOD_YIELD);
+    expect(result.objectRemaining).toBe(9); // still only one node charge per interact
+  });
+
+  it("grants only 1 stone per gather from a rock without a pickaxe", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice");
+    walkPlayerTo(room, "p1", 7.5, 8.5);
+
+    const result = room.interact("p1", "rock-1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.inventory?.stone).toBe(1);
+  });
+
+  it(`grants PICKAXE_STONE_YIELD (${PICKAXE_STONE_YIELD}) stone per gather from a rock while holding a pickaxe`, () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), pickaxe: 1 });
+    walkPlayerTo(room, "p1", 7.5, 8.5);
+
+    const result = room.interact("p1", "rock-1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.inventory?.stone).toBe(PICKAXE_STONE_YIELD);
+  });
+
+  it("an axe gives no bonus when gathering stone, and a pickaxe gives no bonus when gathering wood", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), axe: 1, pickaxe: 1 });
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+    const woodResult = room.interact("p1", "tree-1", "req-wood");
+    expect(woodResult.inventory?.wood).toBe(AXE_WOOD_YIELD); // axe applies
+
+    walkPlayerTo(room, "p1", 7.5, 8.5);
+    const stoneResult = room.interact("p1", "rock-1", "req-stone");
+    expect(stoneResult.inventory?.stone).toBe(PICKAXE_STONE_YIELD); // pickaxe applies, not a cross-tool bonus
+  });
+
+  it("the axe/pickaxe bonus doesn't apply to berries (no tool gathers berries faster)", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), axe: 1, pickaxe: 1 });
+    walkPlayerTo(room, "p1", 3.5, 3.5);
+
+    const result = room.interact("p1", "bush-1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.inventory?.berries).toBe(1);
+  });
+
+  it("a tool-boosted yield still clamps at ITEM_STACK_LIMIT rather than overflowing", () => {
+    const room = new Room(makeTestMap());
+    const nearFullInventory = { ...emptyInventory(), axe: 1, wood: 98 };
+    room.addPlayer("p1", "Alice", nearFullInventory);
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+
+    const result = room.interact("p1", "tree-1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.inventory?.wood).toBe(99); // granted only 1, not the full AXE_WOOD_YIELD of 2, since only 1 slot of room remained
   });
 });

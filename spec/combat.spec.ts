@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
-import { ATTACK_COOLDOWN_MS, BASE_ATTACK_DAMAGE, SWORD_BONUS_DAMAGE } from "../src/shared/constants.js";
+import {
+  ATTACK_COOLDOWN_MS,
+  BASE_ATTACK_DAMAGE,
+  DAY_DURATION_MS,
+  GUARDIAN_SPEED_TILES_PER_SEC,
+  SWORD_BONUS_DAMAGE,
+  WANDERER_NIGHT_SPEED_MULTIPLIER,
+  WANDERER_SPEED_TILES_PER_SEC,
+} from "../src/shared/constants.js";
 import type { EnemySpawn, WorldMap } from "../src/shared/types.js";
 import { emptyInventory } from "../src/shared/types.js";
 
@@ -232,5 +240,43 @@ describe("Room.allEnemiesDefeated — the shared win condition", () => {
     const result = room.attack("p1", enemy!.id, "h1"); // 30 -> 20, still alive
     expect(result.enemyDied).toBe(false);
     expect(result.allEnemiesDefeated).toBeUndefined();
+  });
+});
+
+describe("wanderer night speed", () => {
+  // Spawned far enough from the player that it never reaches contact range
+  // during the single tick measured, so the only thing changing between
+  // runs is how far it moved toward its target.
+  const farWanderer: EnemySpawn = { kind: "wanderer", x: 9, y: 1 };
+
+  function distanceMovedInOneTick(enemySpawn: EnemySpawn, worldCreatedAt: number, nowAtTick: number): number {
+    const room = new Room(makeTestMap(), {}, [], new Map(), () => nowAtTick, worldCreatedAt, [enemySpawn]);
+    room.addPlayer("p1", "Alice"); // near spawn (1.5, 1.5) — draws the enemy toward it
+    const before = room.getEnemies()[0]!;
+    const startX = before.x;
+    const startY = before.y;
+    room.tick(1); // 1 real second of movement
+    const after = room.getEnemies()[0]!;
+    return Math.hypot(after.x - startX, after.y - startY);
+  }
+
+  it("moves at WANDERER_SPEED_TILES_PER_SEC during the day", () => {
+    // worldCreatedAt = 0, now = 0 is the instant the world was created — day.
+    const moved = distanceMovedInOneTick(farWanderer, 0, 0);
+    expect(moved).toBeCloseTo(WANDERER_SPEED_TILES_PER_SEC, 5);
+  });
+
+  it("moves at WANDERER_SPEED_TILES_PER_SEC * WANDERER_NIGHT_SPEED_MULTIPLIER at night", () => {
+    // now = DAY_DURATION_MS is the instant night falls (see daynight.spec.ts).
+    const moved = distanceMovedInOneTick(farWanderer, 0, DAY_DURATION_MS);
+    expect(moved).toBeCloseTo(WANDERER_SPEED_TILES_PER_SEC * WANDERER_NIGHT_SPEED_MULTIPLIER, 5);
+  });
+
+  it("a guardian's speed is unaffected by night", () => {
+    const farGuardian: EnemySpawn = { kind: "guardian", x: 9, y: 1 };
+    const dayMoved = distanceMovedInOneTick(farGuardian, 0, 0);
+    const nightMoved = distanceMovedInOneTick(farGuardian, 0, DAY_DURATION_MS);
+    expect(dayMoved).toBeCloseTo(GUARDIAN_SPEED_TILES_PER_SEC, 5);
+    expect(nightMoved).toBeCloseTo(GUARDIAN_SPEED_TILES_PER_SEC, 5);
   });
 });

@@ -270,6 +270,10 @@ export class GameClient {
     this.send({ type: "combat.attack", requestId, targetId });
   }
 
+  useBandage(requestId: string): void {
+    this.send({ type: "item.useBandage", requestId });
+  }
+
   private send(message: unknown): void {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(message));

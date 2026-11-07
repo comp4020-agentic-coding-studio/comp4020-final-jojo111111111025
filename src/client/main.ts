@@ -1,4 +1,4 @@
-import { ATTACK_RANGE_TILES, BUILD_RANGE_TILES, GATHER_RANGE_TILES, SNAPSHOT_MS } from "../shared/constants.js";
+import { ATTACK_RANGE_TILES, BUILD_RANGE_TILES, GATHER_RANGE_TILES, MAX_HEALTH, SNAPSHOT_MS } from "../shared/constants.js";
 import { RECIPES } from "../shared/recipes.js";
 import type { Building, ItemKind, MapObject, WorldMap } from "../shared/types.js";
 import { ITEM_KINDS, emptyInventory } from "../shared/types.js";
@@ -46,6 +46,7 @@ const touchJoystickKnobEl = document.getElementById("touch-joystick-knob")!;
 const touchInteractEl = document.getElementById("touch-interact") as HTMLButtonElement;
 const touchAttackEl = document.getElementById("touch-attack") as HTMLButtonElement;
 const touchChestEl = document.getElementById("touch-chest") as HTMLButtonElement;
+const touchBandageEl = document.getElementById("touch-bandage") as HTMLButtonElement;
 const resourceEls: Partial<Record<ItemKind, HTMLElement>> = {
   wood: document.getElementById("wood") ?? undefined,
   stone: document.getElementById("stone") ?? undefined,
@@ -97,6 +98,8 @@ let myInventory: Record<ItemKind, number> = emptyInventory();
 let openChestId: string | null = null;
 let lastChestItems: Record<ItemKind, number> = emptyInventory();
 let victoryShown = false;
+/** requestIds of in-flight item.useBandage sends, so onActionResult can tell a bandage result apart from every other action's (it shares the same ok/inventory/health shape as nothing else does uniquely enough to tell them apart otherwise). Entries are removed the instant their result arrives. */
+const pendingBandageRequests = new Set<string>();
 
 const keys = new Set<string>();
 window.addEventListener("keydown", (e) => keys.add(e.key.toLowerCase()));
@@ -288,8 +291,19 @@ const client = new GameClient({
   },
   onActionResult(result) {
     const prevInventory = myInventory;
+    const prevHealth = localHealth;
     if (result.ok && result.inventory) {
       updateInventory(result.inventory);
+    }
+    // item.useBandage shares its ok/inventory/health result shape with
+    // nothing else uniquely enough to tell apart by shape alone — the
+    // pending-request set (populated in performUseBandage) is what marks
+    // this particular result as a bandage use rather than, say, a respawn.
+    if (pendingBandageRequests.delete(result.requestId) && result.ok && result.health !== undefined) {
+      playSound("craftSuccess");
+      showActionFeedback(`Used a bandage (+${result.health - prevHealth} health).`, false);
+      // A rejected bandage use still falls through to the catch-all
+      // rejection message below via its `reason`.
     }
     // objectRemaining is only ever set by a player.interact (gather) result
     // — see net.ts's handling of that message type — so its presence is
@@ -656,6 +670,16 @@ function performToggleChest(): void {
   }
 }
 
+/** The H action: use a bandage if alive, holding at least one, and not already at full health (healing there would just waste the bandage). Shared by the keyboard handler and the touch bandage button. */
+function performUseBandage(): void {
+  if (!localAlive) return;
+  if (myInventory.bandage <= 0) return;
+  if (localHealth >= MAX_HEALTH) return;
+  const requestId = crypto.randomUUID();
+  pendingBandageRequests.add(requestId);
+  client.useBandage(requestId);
+}
+
 window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   if (key === "e") performInteract();
@@ -664,6 +688,7 @@ window.addEventListener("keydown", (e) => {
     performAttack();
   }
   if (key === "c") performToggleChest();
+  if (key === "h") performUseBandage();
 });
 
 /** Set by the touch joystick's pointer handlers below; {0,0} when no touch drag is active. Kept separate from `keys` so a touch drag and a held keyboard key never fight — sendInputFromKeys sums them and clamps to [-1,1], the same range the server already clamps `setInput` to. */
@@ -719,11 +744,12 @@ let touchMove = { dx: 0, dy: 0 };
 })();
 
 // Touch action buttons call the exact same handlers the keyboard does
-// (performInteract/performAttack/performToggleChest), so touch and keyboard
-// can never diverge in what a given action does.
+// (performInteract/performAttack/performToggleChest/performUseBandage), so
+// touch and keyboard can never diverge in what a given action does.
 touchInteractEl.addEventListener("click", () => performInteract());
 touchAttackEl.addEventListener("click", () => performAttack());
 touchChestEl.addEventListener("click", () => performToggleChest());
+touchBandageEl.addEventListener("click", () => performUseBandage());
 
 function sendInputFromKeys(): void {
   if (!localAlive) {

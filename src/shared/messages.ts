@@ -56,6 +56,11 @@ export const CombatAttackMessage = z.object({
   targetId: z.string().min(1).max(64),
 });
 
+export const UseBandageMessage = z.object({
+  type: z.literal("item.useBandage"),
+  requestId: z.string().min(1).max(64),
+});
+
 export const ClientMessage = z.discriminatedUnion("type", [
   RoomJoinMessage,
   PlayerInputMessage,
@@ -65,6 +70,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   ChestTransferMessage,
   PlayerRespawnMessage,
   CombatAttackMessage,
+  UseBandageMessage,
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessage>;

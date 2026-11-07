@@ -1,7 +1,10 @@
 import {
   ATTACK_COOLDOWN_MS,
   ATTACK_RANGE_TILES,
+  AXE_WOOD_YIELD,
+  BANDAGE_HEAL_AMOUNT,
   BASE_ATTACK_DAMAGE,
+  BASE_GATHER_YIELD,
   BOSS_ATTACK_DAMAGE,
   BOSS_ATTACK_RADIUS_TILES,
   BOSS_COOLDOWN_MS,
@@ -18,11 +21,13 @@ import {
   ITEM_STACK_LIMIT,
   MAX_HEALTH,
   MAX_PLAYERS,
+  PICKAXE_STONE_YIELD,
   PLAYER_RADIUS,
   PLAYER_SPEED_TILES_PER_SEC,
   SWORD_BONUS_DAMAGE,
   WANDERER_CONTACT_DAMAGE,
   WANDERER_MAX_HEALTH,
+  WANDERER_NIGHT_SPEED_MULTIPLIER,
   WANDERER_SPEED_TILES_PER_SEC,
 } from "../shared/constants.js";
 import { computeTimeOfDay } from "../shared/daynight.js";
@@ -36,6 +41,7 @@ import type {
   MapObject,
   MapTile,
   PlayerState,
+  ResourceKind,
   WorldMap,
 } from "../shared/types.js";
 import { SOLID_BUILDINGS, SOLID_OBJECTS, SOLID_TERRAIN, emptyInventory } from "../shared/types.js";
@@ -336,15 +342,19 @@ export class Room {
     }
 
     const isWanderer = enemy.kind === "wanderer";
-    const speed = isWanderer ? WANDERER_SPEED_TILES_PER_SEC : GUARDIAN_SPEED_TILES_PER_SEC;
+    // Wanderers alone speed up at night (see constants.ts's
+    // WANDERER_NIGHT_SPEED_MULTIPLIER note) — guardians and the boss hold
+    // their day speed regardless of time of day.
+    const speed = isWanderer
+      ? WANDERER_SPEED_TILES_PER_SEC * (this.isNight() ? WANDERER_NIGHT_SPEED_MULTIPLIER : 1)
+      : GUARDIAN_SPEED_TILES_PER_SEC;
     const contactDamage = isWanderer ? WANDERER_CONTACT_DAMAGE : GUARDIAN_CONTACT_DAMAGE;
 
     // Every enemy chases unconditionally from the moment it exists — no
-    // aggro range, no leash, no day/night passivity (day/night is
-    // visual/ambience only; see constants.ts's note). The only thing that
-    // still holds an enemy back is a placed campfire's safe radius (the
-    // brief's "defensive structure reduces danger" note), which still only
-    // applies to wanderers.
+    // aggro range, no leash, no day/night passivity beyond the wanderer
+    // night-speed bump above. The only thing that still holds an enemy back
+    // is a placed campfire's safe radius (the brief's "defensive structure
+    // reduces danger" note), which still only applies to wanderers.
     const target = this.nearestLivingPlayer(enemy.x, enemy.y);
 
     let moveX = 0;
@@ -567,6 +577,13 @@ export class Room {
     return this.withDedupe("interact", playerId, requestId, () => this.doInteract(playerId, objectId));
   }
 
+  /** The per-gather yield for `kind`, doubled while the player holds the matching tool (axe for wood, pickaxe for stone) — berries have no tool, so always the base yield. */
+  private gatherYieldFor(player: InternalPlayer, kind: ResourceKind): number {
+    if (kind === "wood" && player.inventory.axe > 0) return AXE_WOOD_YIELD;
+    if (kind === "stone" && player.inventory.pickaxe > 0) return PICKAXE_STONE_YIELD;
+    return BASE_GATHER_YIELD;
+  }
+
   private doInteract(playerId: string, objectId: string): ActionResult {
     const player = this.players.get(playerId);
     if (!player) return { ok: false, reason: "unknown_player" };
@@ -581,7 +598,8 @@ export class Room {
     const dist = Math.hypot(player.x - (object.x + 0.5), player.y - (object.y + 0.5));
     if (dist > GATHER_RANGE_TILES) return { ok: false, reason: "too_far" };
 
-    const granted = this.addItem(player, object.resource.kind, 1);
+    const yieldAmount = this.gatherYieldFor(player, object.resource.kind);
+    const granted = this.addItem(player, object.resource.kind, yieldAmount);
     if (granted <= 0) return { ok: false, reason: "inventory_full" };
 
     object.resource.remaining -= 1;
@@ -847,6 +865,31 @@ export class Room {
     this.persistHealth(player);
 
     return { ok: true, health: player.health };
+  }
+
+  /**
+   * Validates and applies using a bandage: consumes one, restores
+   * BANDAGE_HEAL_AMOUNT health (clamped at MAX_HEALTH — healing at full
+   * health, or past the cap, still costs the bandage; the client disables
+   * the button at full health to steer players away from that, but the
+   * server doesn't need to reject it for correctness).
+   */
+  useBandage(playerId: string, requestId: string): ActionResult {
+    return this.withDedupe("bandage", playerId, requestId, () => this.doUseBandage(playerId));
+  }
+
+  private doUseBandage(playerId: string): ActionResult {
+    const player = this.players.get(playerId);
+    if (!player) return { ok: false, reason: "unknown_player" };
+    if (!player.alive) return { ok: false, reason: "dead" };
+    if (player.inventory.bandage <= 0) return { ok: false, reason: "insufficient_materials" };
+
+    this.removeItem(player, "bandage", 1);
+    player.health = Math.min(MAX_HEALTH, player.health + BANDAGE_HEAL_AMOUNT);
+    this.persistHealth(player);
+    this.persistInventory(player);
+
+    return { ok: true, inventory: { ...player.inventory }, health: player.health };
   }
 }
 

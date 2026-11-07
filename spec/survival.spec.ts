@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import { loadOrCreateSessionSecret, mintCookieValue, touchPlayerRecord } from "../src/server/identity.js";
 import { loadPlayerHealth, persistPlayerHealth } from "../src/server/world.js";
-import { ENEMY_CONTACT_COOLDOWN_MS, MAX_HEALTH, WANDERER_CONTACT_DAMAGE } from "../src/shared/constants.js";
-import type { EnemySpawn, WorldMap } from "../src/shared/types.js";
+import { BANDAGE_HEAL_AMOUNT, ENEMY_CONTACT_COOLDOWN_MS, MAX_HEALTH, WANDERER_CONTACT_DAMAGE } from "../src/shared/constants.js";
+import { emptyInventory, type EnemySpawn, type WorldMap } from "../src/shared/types.js";
 import { TestClient, fetchIdentityCookie, startTestServer, type TestServer } from "./helpers/server-harness.js";
 
 function makeClock(start = 0) {
@@ -238,6 +238,92 @@ describe("death wipes inventory and buildings", () => {
     const rebuild = room.build("p1", "floor", 2, 1, "build-2");
     expect(rebuild.ok).toBe(true);
     expect(room.getBuildings()).toHaveLength(1);
+  });
+});
+
+describe("Room.useBandage", () => {
+  it("consumes one bandage and restores BANDAGE_HEAL_AMOUNT health", () => {
+    const room = new Room(makeTestMap());
+    const player = room.addPlayer("p1", "Alice", { ...emptyInventory(), bandage: 2 }, 50);
+
+    const result = room.useBandage("p1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.health).toBe(50 + BANDAGE_HEAL_AMOUNT);
+    expect(result.inventory?.bandage).toBe(1);
+    expect(player.health).toBe(50 + BANDAGE_HEAL_AMOUNT);
+  });
+
+  it("clamps healing at MAX_HEALTH rather than overhealing", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), bandage: 1 }, MAX_HEALTH - 10);
+
+    const result = room.useBandage("p1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.health).toBe(MAX_HEALTH);
+  });
+
+  it("still consumes the bandage even when already at full health", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), bandage: 1 });
+
+    const result = room.useBandage("p1", "req-1");
+    expect(result.ok).toBe(true);
+    expect(result.health).toBe(MAX_HEALTH);
+    expect(result.inventory?.bandage).toBe(0);
+  });
+
+  it("rejects when the player has no bandages", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", emptyInventory(), 50);
+
+    const result = room.useBandage("p1", "req-1");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("insufficient_materials");
+    expect(room.getPlayer("p1")!.health).toBe(50);
+  });
+
+  it("rejects for a dead player, and never consumes their bandage", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), bandage: 1 }, 0);
+
+    const result = room.useBandage("p1", "req-1");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("dead");
+    expect(room.getPlayer("p1")!.inventory.bandage).toBe(1);
+  });
+
+  it("rejects for an unknown player", () => {
+    const room = new Room(makeTestMap());
+    const result = room.useBandage("does-not-exist", "req-1");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unknown_player");
+  });
+
+  it("is idempotent for a repeated request ID — a retried use never double-consumes or double-heals", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), bandage: 3 }, 10);
+
+    const first = room.useBandage("p1", "req-dup");
+    const second = room.useBandage("p1", "req-dup");
+    expect(second).toEqual(first);
+    expect(room.getPlayer("p1")!.inventory.bandage).toBe(2);
+    expect(room.getPlayer("p1")!.health).toBe(10 + BANDAGE_HEAL_AMOUNT);
+  });
+
+  it("persists both health and inventory via the provided callbacks", () => {
+    const healthCalls: Array<{ playerId: string; health: number }> = [];
+    const inventoryCalls: Array<{ playerId: string; inventory: Record<string, number> }> = [];
+    const room = new Room(makeTestMap(), {
+      playerHealth: (playerId, health) => healthCalls.push({ playerId, health }),
+      playerInventory: (playerId, inventory) => inventoryCalls.push({ playerId, inventory }),
+    });
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), bandage: 1 }, 50);
+
+    room.useBandage("p1", "req-1");
+
+    expect(healthCalls).toEqual([{ playerId: "p1", health: 50 + BANDAGE_HEAL_AMOUNT }]);
+    expect(inventoryCalls).toHaveLength(1);
+    expect(inventoryCalls[0]!.inventory.bandage).toBe(0);
   });
 });
 

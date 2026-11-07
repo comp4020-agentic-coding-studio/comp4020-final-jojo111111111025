@@ -82,9 +82,9 @@ this drift from what the code actually guarantees.
   don't add a second place that can flip `alive` without the same wipe.
 - **Touch and keyboard input must call the same client-side action
   functions, never duplicate the logic.** `performInteract`/
-  `performAttack`/`performToggleChest`/`performToggleBeacon` in
-  `main.ts` are each called from both the keyboard handler and a touch
-  button; a new input method or action needs to share that one function,
-  not grow a second implementation that can drift from it. Movement is
-  summed (`touchMove` + `keys`, clamped to `[-1, 1]`), never one input
+  `performAttack`/`performToggleChest`/`performUseBandage` in `main.ts` are
+  each called from both the keyboard handler and a touch button; a new
+  input method or action needs to share that one function, not grow a
+  second implementation that can drift from it. Movement is summed
+  (`touchMove` + `keys`, clamped to `[-1, 1]`), never one input
   overwriting the other.

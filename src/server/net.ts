@@ -333,6 +333,28 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
         return;
       }
 
+      if (msg.type === "item.useBandage") {
+        if (!interactLimiter.allow(conn.id)) {
+          send(socket, {
+            type: "action.result",
+            requestId: msg.requestId,
+            ok: false,
+            reason: "rate_limited",
+          });
+          return;
+        }
+        const result = room.useBandage(conn.id, msg.requestId);
+        send(socket, {
+          type: "action.result",
+          requestId: msg.requestId,
+          ok: result.ok,
+          reason: result.reason,
+          inventory: result.inventory,
+          health: result.health,
+        });
+        return;
+      }
+
       if (msg.type === "combat.attack") {
         if (!interactLimiter.allow(conn.id)) {
           send(socket, {
