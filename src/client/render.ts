@@ -68,6 +68,8 @@ export interface RenderEnemy {
   health: number;
   maxHealth: number;
   telegraphing: boolean;
+  /** True for a brief client-side window right after a combat.event names this enemy as the target — drawEnemy tints it white for that window so a landed hit reads as a visible impact, not just a health-bar tick. Purely cosmetic: the server never sends this, main.ts derives it from a per-enemy timestamp against the current clock. */
+  flashing?: boolean;
 }
 
 export interface RenderZone {
@@ -88,12 +90,14 @@ export function render(
   isNight: boolean,
   /** World-space centres of whatever a key press would currently act on (gather/zone-transition target for E, an attackable enemy for Space, a chest for C) — drawn as rings so a first-time player can see what a key will do before pressing it. Empty when nothing is in range. */
   highlights: Array<{ x: number; y: number; color: string }> = [],
+  /** A small screen-space pixel offset applied to the whole scene (terrain/objects/enemies/players/highlights alike, everything but the night tint) — main.ts drives this from a short decaying shake triggered by the local player taking or landing a hit, so impact reads as a felt event, not just a number change. {x:0,y:0} (the default) draws exactly where it always did. */
+  shakeOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): void {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, viewport.width, viewport.height);
 
-  const originX = camera.x * TILE_SIZE - viewport.width / 2;
-  const originY = camera.y * TILE_SIZE - viewport.height / 2;
+  const originX = camera.x * TILE_SIZE - viewport.width / 2 - shakeOffset.x;
+  const originY = camera.y * TILE_SIZE - viewport.height / 2 - shakeOffset.y;
 
   const startCol = Math.max(0, Math.floor(originX / TILE_SIZE));
   const startRow = Math.max(0, Math.floor(originY / TILE_SIZE));
@@ -357,23 +361,40 @@ export function drawObject(ctx: CanvasRenderingContext2D, obj: MapObject, origin
  * health bar and telegraph ring are positioned off the same radius/anchor
  * math either way, so they land in the same place sprite or fallback.
  */
-function drawEnemy(ctx: CanvasRenderingContext2D, enemy: RenderEnemy, originX: number, originY: number): void {
+export function drawEnemy(ctx: CanvasRenderingContext2D, enemy: RenderEnemy, originX: number, originY: number): void {
   const px = enemy.x * TILE_SIZE - originX;
   const py = enemy.y * TILE_SIZE - originY;
   const radius = enemy.kind === "boss" ? TILE_SIZE * 0.55 : TILE_SIZE * 0.3;
 
   const rect = ENEMY_SPRITES[enemy.kind as keyof typeof ENEMY_SPRITES];
   const img = rect && getImage(rect);
+  let flashBounds: [number, number, number, number] | undefined;
   if (rect && img) {
     const x = Math.round(px - rect.w / 2);
     const y = Math.round(py - TILE_SIZE / 2);
     const destY = y - (rect.h - TILE_SIZE);
     ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, x, destY, rect.w, rect.h);
+    flashBounds = [x, destY, rect.w, rect.h];
   } else {
     ctx.fillStyle = ENEMY_COLORS[enemy.kind] ?? "#e00";
     ctx.beginPath();
     ctx.arc(px, py, radius, 0, Math.PI * 2);
     ctx.fill();
+    flashBounds = [px - radius, py - radius, radius * 2, radius * 2];
+  }
+
+  // A landed hit should read as a visible impact, not just a health-bar
+  // tick — tint whatever was just drawn (sprite or fallback circle) white
+  // for a brief window. source-atop composites the fill only onto pixels
+  // that already have alpha from the drawImage/fill above, so a plain
+  // fillRect over the bounding box tints exactly the enemy's silhouette,
+  // sprite or circle, without needing per-pixel masking.
+  if (enemy.flashing && flashBounds) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+    ctx.fillRect(...flashBounds);
+    ctx.restore();
   }
 
   if (enemy.telegraphing) {

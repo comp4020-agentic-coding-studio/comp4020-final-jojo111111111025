@@ -263,11 +263,19 @@ const client = new GameClient({
       remotePlayers.set(p.id, { x: p.x, y: p.y, zone: existing?.zone ?? "overworld", alive: p.alive });
       if (p.id === localPlayerId) {
         const wasAlive = localAlive;
+        const prevHealth = localHealth;
         localPos = { x: p.x, y: p.y };
         localAlive = p.alive;
         localHealth = p.health;
         updateHealthUi();
-        if (wasAlive && !p.alive) flashDamage();
+        // Any drop in health — a wanderer's contact damage, the boss's
+        // telegraphed slam, not just the final hit that kills — gets the
+        // same felt reaction; dying is one instance of taking damage, not
+        // a separate category of feedback.
+        if (p.health < prevHealth) {
+          flashDamage();
+          triggerShake(3);
+        }
         updateDeathUi();
       } else {
         recordRemotePlayerPosition(p.id, p.x, p.y);
@@ -337,6 +345,11 @@ const client = new GameClient({
     }
     const enemy = enemies.find((e) => e.id === event.targetId);
     if (enemy) enemy.health = event.enemyHealth;
+    flashEnemy(event.targetId);
+    // Every hit on this enemy shakes the screen a little, win or lose — a
+    // kill shakes harder, a visible exclamation point on top of the health
+    // bar reaching zero.
+    if (event.attackerId === localPlayerId) triggerShake(event.enemyDied ? 5 : 2.5);
   },
   onObjectDepleted(event) {
     applyObjectDepleted(world, event);
@@ -417,6 +430,43 @@ function flashDamage(): void {
   damageFlashEl.classList.add("show");
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => damageFlashEl.classList.remove("show"), 200);
+}
+
+/**
+ * A short, decaying screen shake: frame() samples `shakeMagnitudePx` each
+ * tick (while `performance.now() < shakeEndAt`) and feeds a fresh random
+ * jitter at that magnitude into render()'s shakeOffset, so the whole scene
+ * visibly judders for a beat around a hit — stronger for the boss (bigger
+ * stakes, bigger shake) than a sword tap. Re-triggering (e.g. taking a
+ * second hit before the first shake ends) simply extends/raises it rather
+ * than queuing — only the latest trigger matters.
+ */
+let shakeEndAt = 0;
+let shakeMagnitudePx = 0;
+function triggerShake(magnitudePx: number, durationMs = 180): void {
+  shakeEndAt = performance.now() + durationMs;
+  shakeMagnitudePx = Math.max(shakeMagnitudePx, magnitudePx);
+}
+function currentShakeOffset(): { x: number; y: number } {
+  const now = performance.now();
+  if (now >= shakeEndAt) {
+    shakeMagnitudePx = 0;
+    return { x: 0, y: 0 };
+  }
+  const remaining = (shakeEndAt - now) / 180; // 1 at trigger, 0 at the end
+  const mag = shakeMagnitudePx * remaining;
+  return { x: (Math.random() * 2 - 1) * mag, y: (Math.random() * 2 - 1) * mag };
+}
+
+/**
+ * How long drawEnemy's white hit-flash stays on an enemy after it's named
+ * as a combat.event target — short enough to read as a single impact, not
+ * a lingering status effect.
+ */
+const ENEMY_FLASH_MS = 120;
+const enemyFlashUntil = new Map<string, number>();
+function flashEnemy(enemyId: string): void {
+  enemyFlashUntil.set(enemyId, performance.now() + ENEMY_FLASH_MS);
 }
 
 respawnButtonEl.addEventListener("click", () => {
@@ -880,11 +930,13 @@ function frame(): void {
         return { id, x: drawn.x, y: drawn.y, isLocal, alive: p.alive };
       });
     const zoneBuildings = localZone === "overworld" ? [...buildings.values()] : [];
+    const now = performance.now();
     const zoneEnemies: RenderEnemy[] = enemies
       .filter((e) => e.zone === localZone)
       .map((e) => {
         const drawn = enemyBuffers.get(e.id)?.sample(renderT) ?? { x: e.x, y: e.y };
-        return { ...e, x: drawn.x, y: drawn.y };
+        const flashUntil = enemyFlashUntil.get(e.id);
+        return { ...e, x: drawn.x, y: drawn.y, flashing: flashUntil !== undefined && now < flashUntil };
       });
 
     // Same targeting logic the E/Space/C handlers use (nearestInteractable,
@@ -912,6 +964,7 @@ function frame(): void {
       { width: canvas.width, height: canvas.height },
       isNight,
       highlights,
+      currentShakeOffset(),
     );
 
     promptEl.textContent = "press E to gather";
