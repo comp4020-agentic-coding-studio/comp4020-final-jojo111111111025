@@ -56,6 +56,8 @@ export interface ClientHandlers {
     damageDealt?: number;
   }) => void;
   onEntitySpawned: (building: Building) => void;
+  /** Fired the instant any player dies — every building they owned is gone, and (for the victim's own client) their inventory is now empty. */
+  onPlayerDied: (event: { playerId: string; removedBuildingIds: string[]; inventory: Record<ItemKind, number> }) => void;
   onCombatEvent: (event: {
     attackerId: string;
     targetId: string;
@@ -214,6 +216,9 @@ export class GameClient {
         break;
       case "entity.spawned":
         this.handlers.onEntitySpawned(msg.building);
+        break;
+      case "player.died":
+        this.handlers.onPlayerDied(msg);
         break;
       case "combat.event":
         this.handlers.onCombatEvent(msg);

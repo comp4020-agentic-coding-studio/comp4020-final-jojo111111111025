@@ -21,6 +21,14 @@ within 5 minutes reconnects you as the same player with your inventory,
 health, and position intact, via a signed, httpOnly identity cookie the
 server issues on first load.
 
+- Dying costs everything you'd built up: the instant your health reaches
+  zero, your inventory is emptied and every building you placed (walls,
+  floors, campfires, workbenches, chests — chest contents included) is
+  removed from the shared map for good. Respawning at the campsite restores
+  full health, nothing else; there's no grace period and no way to recover
+  what was lost. This applies however you died — a wanderer's bite, the
+  boss's slam, anything that brings your health to 0.
+
 - WASD/arrow keys move; `E` gathers from a nearby resource node or
   interacts with a dungeon entrance/exit, depending on what's in range;
   `Space` attacks the nearest adjacent enemy.
@@ -130,6 +138,7 @@ set) aren't used yet.
 ## Persistence
 
 Everything survives a restart: the world seed and resource depletion,
-buildings, chest contents, farm plot timestamps, each identity's
-inventory and health, boss-defeated/beacon state, and any pending reward
-owed to a player who was evicted before a reward landed.
+buildings and chest contents, and each identity's inventory and health.
+A building removed by its owner's death is deleted from storage the same
+instant it's removed in memory, not just hidden client-side — a restart
+right after a death never brings it back.

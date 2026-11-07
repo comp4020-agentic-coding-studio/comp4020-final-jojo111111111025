@@ -406,6 +406,15 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
 
   const tickTimer = setInterval(() => {
     room.tick(TICK_MS / 1000);
+    for (const death of room.drainDeathEvents()) {
+      log("player_died", { player_id: death.playerId, buildings_lost: death.removedBuildingIds.length });
+      broadcast(connections, {
+        type: "player.died",
+        playerId: death.playerId,
+        removedBuildingIds: death.removedBuildingIds,
+        inventory: death.inventory,
+      });
+    }
   }, TICK_MS);
 
   const snapshotTimer = setInterval(() => {

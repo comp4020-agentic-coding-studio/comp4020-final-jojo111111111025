@@ -91,6 +91,19 @@ export function persistBuilding(db: Database.Database, building: Building): bool
   }
 }
 
+/**
+ * Removes a building row and any chest_items rows that reference it (the
+ * foreign key has no ON DELETE CASCADE, so the chest's contents are deleted
+ * explicitly, in the same transaction, first). Used when a player dies and
+ * every building they own is wiped from the shared map.
+ */
+export function removeBuilding(db: Database.Database, buildingId: string): void {
+  db.transaction(() => {
+    db.prepare(`DELETE FROM chest_items WHERE chest_id = ?`).run(buildingId);
+    db.prepare(`DELETE FROM buildings WHERE id = ?`).run(buildingId);
+  })();
+}
+
 export function loadChestItems(db: Database.Database, chestId: string): Record<ItemKind, number> {
   const rows = db
     .prepare("SELECT item_kind, quantity FROM chest_items WHERE chest_id = ?")
@@ -187,6 +200,7 @@ export function createRoomPersistence(db: Database.Database): RoomPersistence {
   return {
     nodeRemaining: (objectId, remaining) => persistNodeRemaining(db, objectId, remaining),
     building: (building) => persistBuilding(db, building),
+    removeBuilding: (buildingId) => removeBuilding(db, buildingId),
     chestItem: (chestId, kind, quantity) => persistChestItem(db, chestId, kind, quantity),
     playerInventory: (playerId, inventory) => persistPlayerInventory(db, playerId, inventory),
     playerHealth: (playerId, health) => persistPlayerHealth(db, playerId, health),

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { WANDERER_MAX_HEALTH } from "../src/shared/constants.js";
+import { ENEMY_CONTACT_COOLDOWN_MS, MAX_HEALTH, WANDERER_CONTACT_DAMAGE, WANDERER_MAX_HEALTH } from "../src/shared/constants.js";
 import type { EnemySpawn } from "../src/shared/types.js";
 import { TestClient, startTestServer, type TestServer } from "./helpers/server-harness.js";
 import { compactIntegrationMap } from "./helpers/test-fixtures.js";
@@ -157,4 +157,59 @@ describe("cross-room isolation for combat actions", () => {
     clientA.close();
     clientB.close();
   });
+});
+
+describe("death — full wire path", () => {
+  it(
+    "a player killed by enemy contact damage has their buildings removed and inventory wiped, broadcast as player.died to every connected client",
+    async () => {
+      // A wanderer placed right on the spawn cell deals contact damage every
+      // tick (well under its cooldown), so the player dies quickly without
+      // needing to wait out real combat cooldowns.
+      const spawnEnemy: EnemySpawn = { kind: "wanderer", x: 1, y: 1 };
+      server = await startTestServer({ roomCode: "TEST", map: compactIntegrationMap(), enemySpawns: [spawnEnemy] });
+      const victim = new TestClient(server.wsUrl);
+      const observer = new TestClient(server.wsUrl);
+      const joinedVictim = await victim.join("Alice", "TEST");
+      await observer.join("Bob", "TEST");
+
+      // Gather some wood and place a floor so there's something real to lose.
+      for (let i = 0; i < 6; i++) {
+        victim.send({ type: "player.interact", requestId: `gather-${i}`, objectId: "wood-node-1" });
+        await victim.waitFor((m) => m.requestId === `gather-${i}`);
+      }
+      victim.send({ type: "building.place", requestId: "build-1", recipeId: "floor", x: 1, y: 2 });
+      const buildResult = await victim.waitFor((m) => m.requestId === "build-1");
+      expect(buildResult.ok).toBe(true);
+      const buildingId = buildResult.buildingId as string;
+
+      await observer.waitFor((m) => m.type === "entity.spawned" && m.building.id === buildingId);
+
+      const hitsNeeded = Math.ceil(MAX_HEALTH / WANDERER_CONTACT_DAMAGE);
+      // The tick loop (20Hz) applies contact damage on its own
+      // ENEMY_CONTACT_COOLDOWN_MS cadence; give waitFor a timeout comfortably
+      // longer than the real time that takes, rather than racing it with a
+      // separate sleep (a sleep longer than waitFor's own timeout would let
+      // waitFor reject before the event it's waiting for ever arrives).
+      const waitForTimeoutMs = hitsNeeded * (ENEMY_CONTACT_COOLDOWN_MS + 100) + 5000;
+      const diedToVictim = victim.waitFor((m) => m.type === "player.died", waitForTimeoutMs);
+      const diedToObserver = observer.waitFor((m) => m.type === "player.died", waitForTimeoutMs);
+
+      const deathToVictim = await diedToVictim;
+      expect(deathToVictim.playerId).toBe(joinedVictim.playerId);
+      expect(deathToVictim.removedBuildingIds).toEqual([buildingId]);
+      expect(deathToVictim.inventory.wood).toBe(0);
+
+      const deathToObserver = await diedToObserver;
+      expect(deathToObserver.playerId).toBe(joinedVictim.playerId);
+      expect(deathToObserver.removedBuildingIds).toEqual([buildingId]);
+
+      expect(server.room.getPlayer(joinedVictim.playerId)!.alive).toBe(false);
+      expect(server.room.getBuildings()).toHaveLength(0);
+
+      victim.close();
+      observer.close();
+    },
+    30000,
+  );
 });

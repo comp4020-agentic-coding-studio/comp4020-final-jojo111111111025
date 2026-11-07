@@ -2,9 +2,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import { loadOrCreateSessionSecret, mintCookieValue, touchPlayerRecord } from "../src/server/identity.js";
 import { loadPlayerHealth, persistPlayerHealth } from "../src/server/world.js";
-import { MAX_HEALTH } from "../src/shared/constants.js";
-import type { WorldMap } from "../src/shared/types.js";
+import { ENEMY_CONTACT_COOLDOWN_MS, MAX_HEALTH, WANDERER_CONTACT_DAMAGE } from "../src/shared/constants.js";
+import type { EnemySpawn, WorldMap } from "../src/shared/types.js";
 import { TestClient, fetchIdentityCookie, startTestServer, type TestServer } from "./helpers/server-harness.js";
+
+function makeClock(start = 0) {
+  let now = start;
+  return { now: () => now, advance: (ms: number) => (now += ms) };
+}
+
+/** Kills `playerId` via repeated wanderer contact damage (the only way outside a direct unit test to actually reach 0 health and trigger Room's real death/wipe path), advancing `clock` past ENEMY_CONTACT_COOLDOWN_MS between each tick. */
+function killViaContactDamage(room: Room, clock: ReturnType<typeof makeClock>): void {
+  const hitsNeeded = Math.ceil(MAX_HEALTH / WANDERER_CONTACT_DAMAGE);
+  for (let i = 0; i < hitsNeeded; i++) {
+    room.tick(0.01);
+    clock.advance(ENEMY_CONTACT_COOLDOWN_MS + 1);
+  }
+}
 
 /** Mints a valid signed identity cookie for a specific id, for tests that need to control the identity ahead of the first join. */
 function mintCookieForId(server: TestServer, id: string): string {
@@ -66,16 +80,17 @@ describe("Room player health and respawn", () => {
     expect(result.reason).toBe("unknown_player");
   });
 
-  it("respawn resets a dead player's health and position but never touches inventory", () => {
+  it("respawn resets a dead player's health and position, and does not itself touch inventory (the wipe already happened at death, not here)", () => {
     const room = new Room(makeTestMap());
     const player = room.addPlayer("p1", "Alice", undefined, 0); // starts dead
-    // Grant some inventory directly to prove it survives respawn untouched.
+    // interact() rejects a dead player's actions entirely, so there's no
+    // inventory to re-check here — this confirms respawn's own code path
+    // doesn't mutate inventory, distinct from the wipe damagePlayer already
+    // applied at the moment health reached 0 (see the death-wipe describe
+    // block below for that).
     for (let i = 0; i < 3; i++) {
       room.interact("p1", "wood-node", `grant-${i}`);
     }
-    // interact() rejects a dead player's actions, so inventory stays at 0 here —
-    // confirm that rejection, then respawn, then confirm post-respawn gathering works
-    // and nothing was silently granted while dead.
     expect(room.getPlayer("p1")!.inventory.wood).toBe(0);
 
     const result = room.respawn("p1");
@@ -85,25 +100,7 @@ describe("Room player health and respawn", () => {
     const respawned = room.getPlayer("p1")!;
     expect(respawned.alive).toBe(true);
     expect(respawned.health).toBe(MAX_HEALTH);
-    expect(respawned.inventory.wood).toBe(0); // untouched, not reset to some other value — still whatever it was
-  });
-
-  it("respawn preserves pre-existing inventory (death never erases progress)", () => {
-    const room = new Room(makeTestMap());
-    room.addPlayer("p1", "Alice"); // starts alive
-    const gather = room.interact("p1", "wood-node", "grant-1");
-    expect(gather.ok).toBe(true);
-    expect(room.getPlayer("p1")!.inventory.wood).toBe(1);
-
-    // Can't actually die without combat (Phase D step 2), so simulate it via
-    // a second player constructed pre-dead with the same inventory shape,
-    // proving respawn's code path doesn't touch the inventory object at all.
-    const room2 = new Room(makeTestMap());
-    const dead = room2.addPlayer("p2", "Bob", { ...room.getPlayer("p1")!.inventory }, 0);
-    expect(dead.inventory.wood).toBe(1);
-    const result = room2.respawn("p2");
-    expect(result.ok).toBe(true);
-    expect(room2.getPlayer("p2")!.inventory.wood).toBe(1);
+    expect(respawned.inventory.wood).toBe(0);
   });
 
   it("a dead player's interact/craft/build/chest actions are all rejected with reason 'dead'", () => {
@@ -133,6 +130,114 @@ describe("Room player health and respawn", () => {
     room.addPlayer("p1", "Alice", undefined, 0);
     room.respawn("p1");
     expect(calls).toEqual([{ playerId: "p1", health: MAX_HEALTH }]);
+  });
+});
+
+describe("death wipes inventory and buildings", () => {
+  const WANDERER_ON_SPAWN: EnemySpawn = { kind: "wanderer", x: 1, y: 1 };
+
+  it("empties a player's inventory the instant their health reaches 0", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [WANDERER_ON_SPAWN]);
+    room.addPlayer("p1", "Alice");
+    for (let i = 0; i < 5; i++) room.interact("p1", "wood-node", `grant-${i}`);
+    expect(room.getPlayer("p1")!.inventory.wood).toBe(5);
+
+    killViaContactDamage(room, clock);
+
+    const dead = room.getPlayer("p1")!;
+    expect(dead.alive).toBe(false);
+    expect(dead.inventory.wood).toBe(0);
+  });
+
+  it("removes every building the dead player owns from getBuildings", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [WANDERER_ON_SPAWN]);
+    room.addPlayer("p1", "Alice");
+    for (let i = 0; i < 6; i++) room.interact("p1", "wood-node", `grant-${i}`);
+    const build = room.build("p1", "floor", 2, 2, "build-1"); // within BUILD_RANGE_TILES of the (1.5, 1.5) spawn
+    expect(build.ok).toBe(true);
+    expect(room.getBuildings()).toHaveLength(1);
+
+    killViaContactDamage(room, clock);
+
+    expect(room.getBuildings()).toHaveLength(0);
+  });
+
+  it("leaves another player's buildings untouched", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [WANDERER_ON_SPAWN]);
+    room.addPlayer("p1", "Alice");
+    room.addPlayer("p2", "Bob");
+    for (let i = 0; i < 6; i++) room.interact("p2", "wood-node", `grant-${i}`);
+    const build = room.build("p2", "floor", 2, 2, "build-1");
+    expect(build.ok).toBe(true);
+
+    killViaContactDamage(room, clock); // only p1 is in the wanderer's contact range
+
+    expect(room.getPlayer("p1")!.alive).toBe(false);
+    expect(room.getPlayer("p2")!.alive).toBe(true);
+    expect(room.getBuildings()).toHaveLength(1);
+    expect(room.getBuildings()[0]!.ownerId).toBe("p2");
+  });
+
+  it("calls removeBuilding for every building a dead player owned", () => {
+    const removed: string[] = [];
+    const clock = makeClock();
+    const room = new Room(
+      makeTestMap(),
+      { removeBuilding: (id) => removed.push(id) },
+      [],
+      new Map(),
+      clock.now,
+      clock.now(),
+      [WANDERER_ON_SPAWN],
+    );
+    room.addPlayer("p1", "Alice");
+    for (let i = 0; i < 6; i++) room.interact("p1", "wood-node", `grant-${i}`);
+    const build = room.build("p1", "floor", 2, 2, "build-1");
+    const buildingId = build.buildingId!;
+
+    killViaContactDamage(room, clock);
+
+    expect(removed).toEqual([buildingId]);
+  });
+
+  it("drainDeathEvents reports the dead player's id, removed building ids, and the now-empty inventory, then empties on a second call", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [WANDERER_ON_SPAWN]);
+    room.addPlayer("p1", "Alice");
+    for (let i = 0; i < 6; i++) room.interact("p1", "wood-node", `grant-${i}`);
+    const build = room.build("p1", "floor", 2, 2, "build-1");
+    const buildingId = build.buildingId!;
+
+    killViaContactDamage(room, clock);
+
+    const events = room.drainDeathEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.playerId).toBe("p1");
+    expect(events[0]!.removedBuildingIds).toEqual([buildingId]);
+    expect(events[0]!.inventory.wood).toBe(0);
+
+    expect(room.drainDeathEvents()).toEqual([]);
+  });
+
+  it("a building placed and inventory gathered after respawning survive a second death normally (the wipe only fires on an actual death, not on every tick)", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [WANDERER_ON_SPAWN]);
+    room.addPlayer("p1", "Alice");
+    for (let i = 0; i < 6; i++) room.interact("p1", "wood-node", `grant-${i}`);
+    room.build("p1", "floor", 2, 2, "build-1");
+
+    killViaContactDamage(room, clock);
+    expect(room.getBuildings()).toHaveLength(0);
+    room.drainDeathEvents();
+
+    room.respawn("p1");
+    for (let i = 10; i < 16; i++) room.interact("p1", "wood-node", `grant-${i}`);
+    const rebuild = room.build("p1", "floor", 2, 1, "build-2");
+    expect(rebuild.ok).toBe(true);
+    expect(room.getBuildings()).toHaveLength(1);
   });
 });
 

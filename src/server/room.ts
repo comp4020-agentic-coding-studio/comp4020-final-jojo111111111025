@@ -67,6 +67,15 @@ export interface EnemyView {
   telegraphing: boolean;
 }
 
+/** Emitted once per player death (health reaching 0), for net.ts to broadcast as `player.died`. */
+export interface PlayerDeathEvent {
+  playerId: string;
+  /** Every building this player owned, just removed from the shared map. */
+  removedBuildingIds: string[];
+  /** The player's inventory after the death wipe — always all-zero. */
+  inventory: Record<ItemKind, number>;
+}
+
 export type ChestDirection = "deposit" | "withdraw";
 
 interface InternalPlayer extends PlayerState {
@@ -83,6 +92,8 @@ export interface RoomPersistence {
   nodeRemaining?: (objectId: string, remaining: number) => void;
   /** Called after an in-memory building placement succeeds. Returns false if persistence itself rejects it (e.g. a UNIQUE(x, y) race lost to a concurrent request) — the caller then rolls back the in-memory placement too. */
   building?: (building: Building) => boolean;
+  /** Called once per building after an in-memory removal (e.g. the owner's death wipes every building they placed). */
+  removeBuilding?: (buildingId: string) => void;
   chestItem?: (chestId: string, kind: ItemKind, quantity: number) => void;
   /**
    * Called after a player's inventory changes. Keyed by the player's stable
@@ -121,6 +132,8 @@ export class Room {
   private readonly now: () => number;
   private readonly worldCreatedAt: number;
   private readonly enemies = new Map<string, EnemyState>();
+  /** Deaths accumulated since the last drainDeathEvents() call — net.ts drains and broadcasts these after every tick(). */
+  private readonly pendingDeathEvents: PlayerDeathEvent[] = [];
 
   constructor(
     map: WorldMap,
@@ -160,6 +173,26 @@ export class Room {
     if (SOLID_BUILDINGS.has(building.kind)) {
       this.solidBuildingCells.add(cellKey(building.x, building.y));
     }
+  }
+
+  /** Removes a building from every in-memory index (the mirror image of registerBuilding), plus its chest contents if it was a chest. */
+  private unregisterBuilding(building: Building): void {
+    this.buildingsById.delete(building.id);
+    this.buildingsByCell.delete(cellKey(building.x, building.y));
+    this.solidBuildingCells.delete(cellKey(building.x, building.y));
+    this.chestInventories.delete(building.id);
+  }
+
+  /**
+   * Returns every death event recorded since the last call, then clears the
+   * queue. `damagePlayer` is the only place a death can happen — called from
+   * `tickEnemy` (wanderer/guardian contact) and `tickBoss` (the telegraphed
+   * AoE), both only ever invoked from `tick()` — so net.ts draining this
+   * once after every `tick()` call is enough to broadcast `player.died`
+   * exactly once per death, regardless of which enemy caused it.
+   */
+  drainDeathEvents(): PlayerDeathEvent[] {
+    return this.pendingDeathEvents.splice(0, this.pendingDeathEvents.length);
   }
 
   get playerCount(): number {
@@ -758,14 +791,46 @@ export class Room {
     player.health = Math.max(0, player.health - amount);
     if (player.health === 0) {
       player.alive = false;
+      this.persistHealth(player);
+      this.wipePlayerOnDeath(player);
+      return;
     }
     this.persistHealth(player);
   }
 
   /**
-   * Validates and applies a respawn: only a dead player may respawn, and
-   * respawning never touches inventory — death costs nothing but time,
-   * matching the project's documented "no item loss on death" rule.
+   * Death's cost: every building the player owns is removed from the shared
+   * map (and its chest contents, if any, discarded with it), and their
+   * inventory is emptied — a deliberate reversal of the earlier "death costs
+   * nothing but time" design, now that dying has a real stake. Position and
+   * health are respawn's job, not this one. Queues a PlayerDeathEvent for
+   * net.ts to broadcast, since every other player's client needs to drop
+   * this player's buildings from its own view of the shared map too.
+   */
+  private wipePlayerOnDeath(player: InternalPlayer): void {
+    const removedBuildingIds: string[] = [];
+    for (const building of [...this.buildingsById.values()]) {
+      if (building.ownerId !== player.id) continue;
+      this.unregisterBuilding(building);
+      this.persistence.removeBuilding?.(building.id);
+      removedBuildingIds.push(building.id);
+    }
+
+    player.inventory = emptyInventory();
+    this.persistInventory(player);
+
+    this.pendingDeathEvents.push({
+      playerId: player.id,
+      removedBuildingIds,
+      inventory: { ...player.inventory },
+    });
+  }
+
+  /**
+   * Validates and applies a respawn: only a dead player may respawn.
+   * Inventory and buildings were already cleared at the moment of death
+   * (see wipePlayerOnDeath) — respawn itself only restores health and
+   * position.
    */
   respawn(playerId: string): ActionResult {
     const player = this.players.get(playerId);

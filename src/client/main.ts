@@ -340,6 +340,13 @@ const client = new GameClient({
   onEntitySpawned(building) {
     buildings.set(building.id, building);
   },
+  onPlayerDied(event) {
+    for (const id of event.removedBuildingIds) buildings.delete(id);
+    if (event.playerId === localPlayerId) {
+      updateInventory(event.inventory);
+      showActionFeedback("You died — your inventory and buildings are gone.", true);
+    }
+  },
   onCombatEvent(event) {
     if (event.attackerId !== localPlayerId) {
       combatFeedbackEl.textContent = `${event.attackerId === localPlayerId ? "You" : "Someone"} hit for ${event.damage}${event.enemyDied ? " — defeated!" : ""}`;

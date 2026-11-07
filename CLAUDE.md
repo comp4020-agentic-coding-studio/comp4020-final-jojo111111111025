@@ -71,6 +71,15 @@ this drift from what the code actually guarantees.
 - **Don't add features that aren't part of the current `README.md`.** A
   new mechanic, item, or win condition is a `README.md` (and likely ADR)
   decision first, not a quiet addition to `room.ts`.
+- **Death wipes inventory and every building the player owns, in that one
+  server-side place.** `Room.damagePlayer` is the only path to `alive =
+  false`; the instant health reaches 0 it calls `wipePlayerOnDeath`, which
+  empties the inventory and removes (in memory and in SQLite) every building
+  with that player's `ownerId`, then queues a `PlayerDeathEvent`. `net.ts`
+  drains that queue after every `tick()` and broadcasts `player.died` so
+  every client (not just the victim's) drops the removed buildings. A new
+  way for a player to take damage must still go through `damagePlayer` —
+  don't add a second place that can flip `alive` without the same wipe.
 - **Touch and keyboard input must call the same client-side action
   functions, never duplicate the logic.** `performInteract`/
   `performAttack`/`performToggleChest`/`performToggleBeacon` in

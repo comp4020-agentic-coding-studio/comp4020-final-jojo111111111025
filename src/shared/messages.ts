@@ -200,6 +200,21 @@ export const EntitySpawnedMessage = z.object({
   }),
 });
 
+/**
+ * Broadcast the instant a player dies, so every client drops that player's
+ * buildings from the shared map the same moment the server removes them.
+ * Carries the victim's now-emptied inventory too — the periodic
+ * `player.state` broadcast never includes inventory, so without this the
+ * victim's own client would have no way to learn its inventory was wiped
+ * until its next full `world.snapshot` (only sent once, at join/reconnect).
+ */
+export const PlayerDiedMessage = z.object({
+  type: z.literal("player.died"),
+  playerId: z.string(),
+  removedBuildingIds: z.array(z.string()),
+  inventory: z.record(z.string(), z.number()),
+});
+
 /** Broadcast exactly once, the instant the killing blow leaves every enemy on the map dead — the room's shared win condition. */
 export const GameVictoryMessage = z.object({
   type: z.literal("game.victory"),
@@ -220,5 +235,6 @@ export type ServerMessage =
   | z.infer<typeof CombatEventMessage>
   | z.infer<typeof ObjectDepletedMessage>
   | z.infer<typeof EntitySpawnedMessage>
+  | z.infer<typeof PlayerDiedMessage>
   | z.infer<typeof GameVictoryMessage>
   | z.infer<typeof ServerErrorMessage>;
