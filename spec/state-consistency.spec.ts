@@ -88,9 +88,8 @@ describe("in-memory Room state matches SQLite persistence (via the real server, 
     const gatherResult = await client.waitFor((m) => m.requestId === "gather-1");
     expect(gatherResult.ok).toBe(true);
 
-    const targetX = Math.floor(pos.x);
-    const targetY = Math.floor(pos.y) + 1;
-    client.send({ type: "building.place", requestId: "build-1", recipeId: "floor", x: targetX, y: targetY });
+    const freeCell = nearestFreeCell(snapshot, pos);
+    client.send({ type: "building.place", requestId: "build-1", recipeId: "floor", x: freeCell.x, y: freeCell.y });
     const buildResult = await client.waitFor((m) => m.requestId === "build-1");
     expect(buildResult.ok).toBe(true);
 
@@ -179,6 +178,39 @@ function nearest(objects: any[], pos: { x: number; y: number }, kind: string): a
   }
   if (!best) throw new Error(`no ${kind} node found`);
   return best;
+}
+
+/**
+ * Finds a cell within build range of `pos` that isn't water, isn't
+ * occupied by a solid world object, and isn't already a building — the
+ * same occupancy rule Room.doBuild enforces. Map generation is seeded
+ * (deterministic) but which tile sits one step in a given direction from a
+ * gathered node isn't a stable assumption across generator changes, so this
+ * searches rather than hardcoding an offset.
+ */
+function nearestFreeCell(snapshot: any, pos: { x: number; y: number }): { x: number; y: number } {
+  const solidTerrain = new Set(["water"]);
+  const solidObjectCells = new Set(
+    snapshot.objects.filter((o: any) => ["tree", "rock", "campfire"].includes(o.kind)).map((o: any) => `${o.x},${o.y}`),
+  );
+  const buildingCells = new Set(snapshot.buildings.map((b: any) => `${b.x},${b.y}`));
+  const px = Math.floor(pos.x);
+  const py = Math.floor(pos.y);
+  for (let r = 1; r <= 2; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = px + dx;
+        const y = py + dy;
+        if (x < 0 || y < 0 || x >= snapshot.width || y >= snapshot.height) continue;
+        const key = `${x},${y}`;
+        if (solidObjectCells.has(key) || buildingCells.has(key)) continue;
+        const terrain = snapshot.tiles[y * snapshot.width + x]?.terrain;
+        if (solidTerrain.has(terrain)) continue;
+        return { x, y };
+      }
+    }
+  }
+  throw new Error("no free cell found near player");
 }
 
 let seqCounter = 0;

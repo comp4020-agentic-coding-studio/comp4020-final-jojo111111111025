@@ -20,17 +20,8 @@ describe("TERRAIN_SPRITES manifest", () => {
     }
   });
 
-  it("has a sprite for every solid dungeon terrain kind", () => {
-    // dungeon_wall must have a sprite — it's the one SOLID_TERRAIN addition
-    // this integration made, and it would be a silent visual regression
-    // (falls back to a flat fillRect) if a future change to sprites.ts
-    // accidentally dropped it.
-    expect(TERRAIN_SPRITES.dungeon_wall).toBeDefined();
-    expect(TERRAIN_SPRITES.dungeon_floor).toBeDefined();
-  });
-
   it("has a sprite for every TerrainKind — Stage 5 gave water its own sprite, closing the one remaining gap from Stage 1", () => {
-    const kinds: TerrainKind[] = ["grass", "forest", "water", "rock", "dungeon_floor", "dungeon_wall"];
+    const kinds: TerrainKind[] = ["grass", "forest", "water", "rock"];
     for (const kind of kinds) {
       expect(TERRAIN_SPRITES[kind], `${kind}'s sprite`).toBeDefined();
     }
@@ -44,9 +35,9 @@ describe("TERRAIN_SPRITES manifest", () => {
     expect(TERRAIN_SPRITES.grass).toEqual({ sheet: "serene-village", x: 48, y: 0, w: 16, h: 16 });
   });
 
-  it("dungeon_wall is the only sprite taller than one tile grid cell (16px) — the anchor logic in drawTile only needs to handle this one case today", () => {
+  it("no terrain sprite is taller than one tile grid cell (16px)", () => {
     const tallSprites = Object.entries(TERRAIN_SPRITES).filter(([, rect]) => rect!.h > 16);
-    expect(tallSprites.map(([terrain]) => terrain)).toEqual(["dungeon_wall"]);
+    expect(tallSprites).toEqual([]);
   });
 
   it("every terrain in SOLID_TERRAIN that has a sprite uses that sprite consistently (sanity check against a future terrain rename)", () => {

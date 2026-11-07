@@ -6,6 +6,15 @@
 - `mountain/tileset.png` — from [Tiny RPG Mountain Tileset](https://opengameart.org/content/tiny-rpg-mountain-tileset) by Luis Zuno (@ansimuz)
 - **License: CC0.** Public domain, free for personal or commercial use. Credit
   is not required but appreciated — attribution given here as a courtesy.
+- `forest/tileset.png`'s standalone wood-plank props are also used for two
+  placeable buildings: `wall` (a stack of three vertical planks, 36x31 at
+  `x:464,y:304`) and `floor` (a bundle of horizontal planks, 32x16 at
+  `x:496,y:304`) — see `src/client/sprites.ts`'s `BUILDING_SPRITES`.
+- `mountain/tileset.png`'s standalone boulder sprite is used for the `rock`
+  object (the resource node, not the already-sprited `rock` terrain) — but
+  only via a derived cutout file, `public/assets/mountain-cutouts/boulder.png`
+  (see that section below for why this one asset is an explicit exception to
+  this project's "cropped, never modified" policy).
 
 ## Calciumtrice — Dungeon Tileset
 
@@ -19,6 +28,10 @@
   there is no walk, attack, hurt, or death animation included. Last Shelter's
   dungeon characters/enemies are rendered as static sprites for this reason;
   see `docs/adr/` and `PROCESS.md` for how this limitation is handled.
+- This same sheet's "CONTAINERS 16x16" section also supplies two placeable
+  buildings: `chest` (a closed, wood-bound treasure chest, 16x13 at
+  `x:32,y:307`) and `workbench` (a slatted wooden crate, 12x15 at `x:2,y:305`)
+  — see `src/client/sprites.ts`'s `BUILDING_SPRITES`.
 
 ## ansimuz — Tiny RPG Town
 
@@ -47,6 +60,43 @@
   texture, and tiling it at this game's 16px grid produces a visible
   repeating pattern. (`water` is sprited as of Stage 5, from a different
   pack — see below.)
+
+## ansimuz — Tiny RPG Mountain (derived cutout)
+
+- `mountain-cutouts/boulder.png` — a **derived, not byte-for-byte**, file,
+  the one explicit exception to every other asset in this project. Source:
+  the same `mountain/tileset.png` already credited above, its one isolated
+  round-boulder sprite at `x:16,y:16,w:32,h:32`. Unlike every other sprite
+  this project references in place on its own sheet, this one sits on a
+  fully *opaque* scene background (the sheet's small cave-entrance vignette)
+  — confirmed by an alpha-channel scan of the full 32x32 region, which reads
+  alpha 255 throughout, not a droppable prop on a transparent background.
+  Referencing it in place (the way every other `SpriteRect` in this project
+  works) would draw that scene's own floor colour as a solid brown square
+  behind the boulder.
+  - **Generation method:** a colour-distance mask against the scene's own
+    background colour (sampled from the sprite's own corner pixel, which
+    scanning confirmed is pure background on all four corners), threshold
+    tuned by visual inspection (not guessed) to keep the boulder's lighter
+    top-face highlights while still cutting the surrounding floor colour,
+    then re-encoded as a new, minimal 32x32 RGBA PNG with every
+    below-threshold pixel set to fully transparent. The boulder's own pixels
+    are untouched — only the background was zeroed out; no colour, shape or
+    detail of the rock itself was redrawn, blurred or altered.
+  - **Why this exception, not a rejection:** every prior "no usable sprite
+    found" decision in this project's asset passes (tree, the original rock
+    candidate, water) was a case of no genuinely standalone art existing at
+    all in an approved pack. This is the opposite case — a genuinely
+    well-drawn, unambiguous, isolated boulder exists, blocked only by a
+    background-compositing limitation of the source file, not by the art
+    itself. Producing one small derived file to unblock it, with the method
+    stated plainly here, was judged better than leaving `rock` on a flat
+    grey square or re-opening a external-pack search for a worse match.
+  - **License: inherits the source sheet's CC0** (ansimuz, Tiny RPG Mountain
+    Tileset, opengameart.org — see this file's own "ansimuz — Tiny RPG
+    Forest & Mountain" section above). CC0 permits derivative works without
+    restriction, so this cutout carries the same public-domain status as its
+    source.
 
 ## LimeZu — Serene Village (revamped)
 

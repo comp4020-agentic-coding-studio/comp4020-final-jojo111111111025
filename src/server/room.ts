@@ -2,10 +2,6 @@ import {
   ATTACK_COOLDOWN_MS,
   ATTACK_RANGE_TILES,
   BASE_ATTACK_DAMAGE,
-  BEACON_RANGE_TILES,
-  BEACON_REQUIRED_ANCIENT_CORE,
-  BEACON_REQUIRED_STONE,
-  BEACON_REQUIRED_WOOD,
   BOSS_ATTACK_DAMAGE,
   BOSS_ATTACK_RADIUS_TILES,
   BOSS_COOLDOWN_MS,
@@ -15,64 +11,34 @@ import {
   CAMPFIRE_SAFE_RADIUS_TILES,
   ENEMY_CONTACT_COOLDOWN_MS,
   ENEMY_CONTACT_RANGE_TILES,
-  ENEMY_RESPAWN_MS,
-  FARM_RANGE_TILES,
   GATHER_RANGE_TILES,
-  GUARDIAN_AGGRO_RANGE_TILES,
   GUARDIAN_CONTACT_DAMAGE,
   GUARDIAN_MAX_HEALTH,
   GUARDIAN_SPEED_TILES_PER_SEC,
   ITEM_STACK_LIMIT,
   MAX_HEALTH,
   MAX_PLAYERS,
-  NIGHT_WANDERER_COUNT,
   PLAYER_RADIUS,
   PLAYER_SPEED_TILES_PER_SEC,
   SWORD_BONUS_DAMAGE,
-  WANDERER_AGGRO_RANGE_TILES,
   WANDERER_CONTACT_DAMAGE,
-  WANDERER_LEASH_RANGE_TILES,
   WANDERER_MAX_HEALTH,
-  WANDERER_NIGHT_AGGRO_RANGE_TILES,
-  WANDERER_NIGHT_LEASH_RANGE_TILES,
-  WANDERER_NIGHT_RESPAWN_MS,
-  WANDERER_NIGHT_SPEED_TILES_PER_SEC,
   WANDERER_SPEED_TILES_PER_SEC,
-  ZONE_TRANSITION_RANGE_TILES,
 } from "../shared/constants.js";
 import { computeTimeOfDay } from "../shared/daynight.js";
-import { computeCropStage, SEED_TO_CROP } from "../shared/farming.js";
 import { getRecipe } from "../shared/recipes.js";
 import type {
   Building,
-  BuildingKind,
-  CropStage,
   EnemyKind,
   EnemySpawn,
   EnemyState,
-  FarmPlotState,
   ItemKind,
   MapObject,
   MapTile,
   PlayerState,
   WorldMap,
-  Zone,
 } from "../shared/types.js";
 import { SOLID_BUILDINGS, SOLID_OBJECTS, SOLID_TERRAIN, emptyInventory } from "../shared/types.js";
-
-/** A material the beacon accepts deposits of. */
-export type BeaconMaterial = "wood" | "stone" | "ancient_core";
-
-export interface BeaconProgress {
-  wood: number;
-  stone: number;
-  ancientCore: number;
-  requiredWood: number;
-  requiredStone: number;
-  requiredAncientCore: number;
-  bossDefeated: boolean;
-  activated: boolean;
-}
 
 export interface ActionResult {
   ok: boolean;
@@ -82,27 +48,24 @@ export interface ActionResult {
   recipeId?: string;
   buildingId?: string;
   chestItems?: Record<ItemKind, number>;
-  cropStage?: CropStage;
-  farmPlot?: FarmPlotState;
   health?: number;
   enemyHealth?: number;
   enemyDied?: boolean;
   damageDealt?: number;
+  /** Set true only on the killing blow that leaves every enemy on the map dead — the signal net.ts uses to broadcast victory, never set on any other result. */
+  allEnemiesDefeated?: boolean;
 }
 
-/** Wire-safe view of an enemy — omits internal-only fields (contributors Set, spawn point, timers) that broadcasts never need. */
+/** Wire-safe view of an enemy — omits internal-only fields (spawn point, timers) that broadcasts never need. */
 export interface EnemyView {
   id: string;
   kind: EnemyKind;
-  zone: Zone;
   x: number;
   y: number;
   health: number;
   maxHealth: number;
   telegraphing: boolean;
 }
-
-export type FarmAction = "plant" | "water" | "harvest";
 
 export type ChestDirection = "deposit" | "withdraw";
 
@@ -121,7 +84,6 @@ export interface RoomPersistence {
   /** Called after an in-memory building placement succeeds. Returns false if persistence itself rejects it (e.g. a UNIQUE(x, y) race lost to a concurrent request) — the caller then rolls back the in-memory placement too. */
   building?: (building: Building) => boolean;
   chestItem?: (chestId: string, kind: ItemKind, quantity: number) => void;
-  farmPlot?: (plot: FarmPlotState) => void;
   /**
    * Called after a player's inventory changes. Keyed by the player's stable
    * identity id (Phase C), not a per-connection id, so it survives
@@ -130,94 +92,53 @@ export interface RoomPersistence {
   playerInventory?: (playerId: string, inventory: Record<ItemKind, number>) => void;
   /** Called after a player's health changes (damage, healing, or respawn). */
   playerHealth?: (playerId: string, health: number) => void;
-  /** Called exactly once, the instant the boss dies. Returns false if persistence says it was already marked defeated (a redundant call never re-grants loot). */
-  bossDefeated?: () => boolean;
-  /** Called after a successful beacon deposit, adding (never setting) to that material's durable total. */
-  beaconDeposit?: (kind: BeaconMaterial, qty: number) => void;
-  /**
-   * Called when a beacon.activate request passes every in-memory check.
-   * Returns true only if persistence's own atomic check (a WHERE
-   * completed_at IS NULL update) also wins the race — the same
-   * "let the constraint resolve the race" pattern persistBuilding's
-   * UNIQUE(x, y) and persistBossDefeated's WHERE already use. A false here
-   * means another concurrent activate request already won; the caller must
-   * not broadcast victory twice.
-   */
-  activateBeacon?: () => boolean;
-  /**
-   * Called for a boss-kill contributor who is no longer present in the
-   * Room's own `players` map (evicted after a disconnect) by the time the
-   * boss actually dies — queues their reward durably so it isn't silently
-   * lost. Never called for a contributor who is still present; those are
-   * granted directly to their live inventory, the same as before.
-   */
-  grantPendingReward?: (playerId: string, kind: ItemKind, qty: number, reason: string) => void;
 }
 
 /**
- * The single authoritative room for Phase A: one shared world, movement and
- * gathering are both applied synchronously (no `await` between reading and
- * writing player/object state), so JS's single-threaded execution is what
- * actually gives us atomicity here — there is no interleaving point for two
+ * The single authoritative room: one shared world, movement and gathering
+ * are both applied synchronously (no `await` between reading and writing
+ * player/object state), so JS's single-threaded execution is what actually
+ * gives us atomicity here — there is no interleaving point for two
  * "requests" to race inside a tick or inside `interact`.
+ *
+ * Killing every enemy on the map is the room's shared win condition (see
+ * `allEnemiesDefeated`). Enemies are in-memory-only, transient simulation
+ * state, never persisted — a server restart regenerates the full roster
+ * from the deterministic map seed, resetting any in-progress kill count.
+ * This is a known, accepted limitation (see PROCESS.md), not an oversight.
  */
 export class Room {
   readonly map: WorldMap;
   private readonly players = new Map<string, InternalPlayer>();
   private readonly objectsById = new Map<string, MapObject>();
-  /** Zone-qualified (`${zone}:${x},${y}`) — the dungeon and overworld are disjoint coordinate spaces that can share numeric (x, y), so every collision/lookup set here is keyed by zone first. */
   private readonly solidCells = new Set<string>();
   private readonly buildingsById = new Map<string, Building>();
   private readonly buildingsByCell = new Map<string, Building>();
   private readonly solidBuildingCells = new Set<string>();
   private readonly chestInventories = new Map<string, Record<ItemKind, number>>();
-  private readonly farmPlots = new Map<string, FarmPlotState>();
   private readonly persistence: RoomPersistence;
   private readonly recentActions = new Map<string, ActionResult>();
   private readonly now: () => number;
   private readonly worldCreatedAt: number;
   private readonly enemies = new Map<string, EnemyState>();
-  private enemySeq = 0;
-  private bossAlreadyDefeated: boolean;
-  private beaconActivated: boolean;
-  private readonly beaconMaterials: Record<BeaconMaterial, number>;
-  /** Tracks isNight() across ticks so tick() can detect the dusk/dawn edge (the instant it flips) rather than just the current state — see tick()'s night-wanderer spawn/despawn block. Starts false: a room is always constructed at the moment of a real or simulated "day" boundary in every existing call site (map generation always begins at dawn-equivalent), so there's no dusk transition to miss on the very first tick. */
-  private wasNight = false;
 
   constructor(
     map: WorldMap,
     persistence: RoomPersistence = {},
     initialBuildings: Building[] = [],
     initialChestItems: Map<string, Record<ItemKind, number>> = new Map(),
-    initialFarmPlots: FarmPlotState[] = [],
     now: () => number = Date.now,
     worldCreatedAt: number = now(),
     enemySpawns: EnemySpawn[] = [],
-    bossAlreadyDefeated: boolean = false,
-    initialBeaconMaterials: Partial<Record<BeaconMaterial, number>> = {},
-    beaconActivated: boolean = false,
   ) {
     this.map = map;
     this.persistence = persistence;
     this.now = now;
     this.worldCreatedAt = worldCreatedAt;
-    this.bossAlreadyDefeated = bossAlreadyDefeated;
-    this.beaconActivated = beaconActivated;
-    this.beaconMaterials = {
-      wood: initialBeaconMaterials.wood ?? 0,
-      stone: initialBeaconMaterials.stone ?? 0,
-      ancient_core: initialBeaconMaterials.ancient_core ?? 0,
-    };
     for (const obj of map.objects) {
       this.objectsById.set(obj.id, obj);
       if (SOLID_OBJECTS.has(obj.kind)) {
-        this.solidCells.add(zoneCellKey(obj.zone ?? "overworld", obj.x, obj.y));
-      }
-    }
-    for (const obj of map.dungeon.objects) {
-      this.objectsById.set(obj.id, obj);
-      if (SOLID_OBJECTS.has(obj.kind)) {
-        this.solidCells.add(zoneCellKey(obj.zone ?? "dungeon", obj.x, obj.y));
+        this.solidCells.add(cellKey(obj.x, obj.y));
       }
     }
     for (const building of initialBuildings) {
@@ -226,22 +147,18 @@ export class Room {
         this.chestInventories.set(building.id, initialChestItems.get(building.id) ?? emptyInventory());
       }
     }
-    for (const plot of initialFarmPlots) {
-      this.farmPlots.set(plot.buildingId, plot);
-    }
+    let enemySeq = 0;
     for (const spawn of enemySpawns) {
-      if (spawn.kind === "boss" && bossAlreadyDefeated) continue; // a defeated boss never respawns, even across a restart
-      const id = `enemy-${spawn.kind}-${this.enemySeq++}`;
-      this.enemies.set(id, this.makeEnemyState(id, spawn, false));
+      const id = `enemy-${spawn.kind}-${enemySeq++}`;
+      this.enemies.set(id, this.makeEnemyState(id, spawn));
     }
   }
 
-  /** Buildings are overworld-only (the dungeon is a fixed chamber with no player construction), so building cell keys are always zone-qualified as "overworld". */
   private registerBuilding(building: Building): void {
     this.buildingsById.set(building.id, building);
-    this.buildingsByCell.set(zoneCellKey("overworld", building.x, building.y), building);
+    this.buildingsByCell.set(cellKey(building.x, building.y), building);
     if (SOLID_BUILDINGS.has(building.kind)) {
-      this.solidBuildingCells.add(zoneCellKey("overworld", building.x, building.y));
+      this.solidBuildingCells.add(cellKey(building.x, building.y));
     }
   }
 
@@ -261,7 +178,6 @@ export class Room {
       name,
       x: spawn.x + 0.5,
       y: spawn.y + 0.5,
-      zone: "overworld",
       health: initialHealth,
       alive: initialHealth > 0,
       inventory: inventory ?? emptyInventory(),
@@ -322,66 +238,22 @@ export class Room {
     player.inputDy = clamp(dy, -1, 1);
   }
 
-  /** Advances the simulation by dtSeconds, applying movement + collision for every player, then enemy AI, contact damage, and due respawns. */
+  /** Advances the simulation by dtSeconds, applying movement + collision for every player, then enemy AI and contact damage. */
   tick(dtSeconds: number): void {
     for (const player of this.players.values()) {
       this.movePlayer(player, dtSeconds);
     }
-    const now = this.now();
-    const night = this.isNight();
-    if (night && !this.wasNight) this.spawnNightWanderers();
-    if (!night && this.wasNight) this.despawnNightWanderers();
-    this.wasNight = night;
     for (const enemy of this.enemies.values()) {
-      if (!enemy.alive) {
-        if (enemy.respawnAt !== null && now >= enemy.respawnAt) {
-          enemy.alive = true;
-          enemy.health = enemy.maxHealth;
-          enemy.x = enemy.spawnX;
-          enemy.y = enemy.spawnY;
-          enemy.lastContactAt = -Infinity;
-          enemy.respawnAt = null;
-        }
-        continue;
-      }
       this.tickEnemy(enemy, dtSeconds);
     }
   }
 
-  /**
-   * Called exactly once, the instant isNight() flips from false to true —
-   * adds NIGHT_WANDERER_COUNT extra wanderers on top of the map's fixed
-   * roster, in a deterministic ring around the campsite (same style of
-   * fixed-offset placement map.ts's enemySpawnsFor uses for the base
-   * roster, just denser and generated at runtime instead of world-gen
-   * time, since these are transient and never persisted). Clamped into
-   * map bounds the same way enemySpawnsFor's wanderer offsets are.
-   */
-  private spawnNightWanderers(): void {
-    const { campsite } = this.map;
-    for (let i = 0; i < NIGHT_WANDERER_COUNT; i++) {
-      const angle = (i / NIGHT_WANDERER_COUNT) * Math.PI * 2;
-      const x = clamp(Math.round(campsite.x + Math.cos(angle) * 12), 1, this.map.width - 2);
-      const y = clamp(Math.round(campsite.y + Math.sin(angle) * 12), 1, this.map.height - 2);
-      const id = `enemy-wanderer-night-${this.enemySeq++}`;
-      this.enemies.set(id, this.makeEnemyState(id, { kind: "wanderer", zone: "overworld", x, y }, true));
-    }
-  }
-
-  /** Called exactly once, the instant isNight() flips from true to false — removes every night-only wanderer outright, dead or alive, win or lose (no loot, no kill credit either way). */
-  private despawnNightWanderers(): void {
-    for (const [id, enemy] of this.enemies) {
-      if (enemy.nightOnly) this.enemies.delete(id);
-    }
-  }
-
-  private makeEnemyState(id: string, spawn: EnemySpawn, nightOnly: boolean): EnemyState {
+  private makeEnemyState(id: string, spawn: EnemySpawn): EnemyState {
     const maxHealth =
       spawn.kind === "wanderer" ? WANDERER_MAX_HEALTH : spawn.kind === "guardian" ? GUARDIAN_MAX_HEALTH : BOSS_MAX_HEALTH;
     return {
       id,
       kind: spawn.kind,
-      zone: spawn.zone,
       x: spawn.x,
       y: spawn.y,
       health: maxHealth,
@@ -392,9 +264,6 @@ export class Room {
       lastContactAt: -Infinity,
       telegraphing: false,
       nextActionAt: -Infinity,
-      contributors: new Set(),
-      respawnAt: null,
-      nightOnly,
     };
   }
 
@@ -412,11 +281,11 @@ export class Room {
     return false;
   }
 
-  private nearestLivingPlayerInZone(zone: Zone, x: number, y: number): InternalPlayer | undefined {
+  private nearestLivingPlayer(x: number, y: number): InternalPlayer | undefined {
     let best: InternalPlayer | undefined;
     let bestDist = Infinity;
     for (const player of this.players.values()) {
-      if (!player.alive || player.zone !== zone) continue;
+      if (!player.alive) continue;
       const dist = Math.hypot(player.x - x, player.y - y);
       if (dist < bestDist) {
         bestDist = dist;
@@ -434,78 +303,46 @@ export class Room {
     }
 
     const isWanderer = enemy.kind === "wanderer";
-    // Wanderers are passive by day — they simply don't aggro at all outside
-    // night. At night every wanderer (the map's fixed roster and the extra
-    // night-only spawns alike) also moves faster and notices/chases from
-    // further away — see the WANDERER_NIGHT_* constants' doc-comment.
-    const night = this.isNight();
-    const canAggro = isWanderer ? night : true;
-    const wandererNight = isWanderer && night;
-    const aggroRange = isWanderer
-      ? wandererNight
-        ? WANDERER_NIGHT_AGGRO_RANGE_TILES
-        : WANDERER_AGGRO_RANGE_TILES
-      : GUARDIAN_AGGRO_RANGE_TILES;
-    const speed = isWanderer
-      ? wandererNight
-        ? WANDERER_NIGHT_SPEED_TILES_PER_SEC
-        : WANDERER_SPEED_TILES_PER_SEC
-      : GUARDIAN_SPEED_TILES_PER_SEC;
-    const leashRange = wandererNight ? WANDERER_NIGHT_LEASH_RANGE_TILES : WANDERER_LEASH_RANGE_TILES;
+    const speed = isWanderer ? WANDERER_SPEED_TILES_PER_SEC : GUARDIAN_SPEED_TILES_PER_SEC;
     const contactDamage = isWanderer ? WANDERER_CONTACT_DAMAGE : GUARDIAN_CONTACT_DAMAGE;
 
-    const target = canAggro ? this.nearestLivingPlayerInZone(enemy.zone, enemy.x, enemy.y) : undefined;
-    const distToTarget = target ? Math.hypot(target.x - enemy.x, target.y - enemy.y) : Infinity;
-    const distFromSpawn = Math.hypot(enemy.x - enemy.spawnX, enemy.y - enemy.spawnY);
+    // Every enemy chases unconditionally from the moment it exists — no
+    // aggro range, no leash, no day/night passivity (day/night is
+    // visual/ambience only; see constants.ts's note). The only thing that
+    // still holds an enemy back is a placed campfire's safe radius (the
+    // brief's "defensive structure reduces danger" note), which still only
+    // applies to wanderers.
+    const target = this.nearestLivingPlayer(enemy.x, enemy.y);
 
     let moveX = 0;
     let moveY = 0;
 
-    if (target && distToTarget <= aggroRange && !(isWanderer && this.isNearSafeCampfire(target.x, target.y))) {
-      // Chase, unless pulled too far from spawn (wanderers only leash).
-      if (!isWanderer || distFromSpawn <= leashRange) {
-        const dx = target.x - enemy.x;
-        const dy = target.y - enemy.y;
-        const len = Math.hypot(dx, dy) || 1;
-        moveX = dx / len;
-        moveY = dy / len;
-      } else {
-        // Leashed: head home instead.
-        const dx = enemy.spawnX - enemy.x;
-        const dy = enemy.spawnY - enemy.y;
-        const len = Math.hypot(dx, dy);
-        if (len > 0.1) {
-          moveX = dx / len;
-          moveY = dy / len;
-        }
-      }
+    if (target && !(isWanderer && this.isNearSafeCampfire(target.x, target.y))) {
+      const dx = target.x - enemy.x;
+      const dy = target.y - enemy.y;
+      const len = Math.hypot(dx, dy) || 1;
+      moveX = dx / len;
+      moveY = dy / len;
 
-      if (distToTarget <= ENEMY_CONTACT_RANGE_TILES) {
+      if (len <= ENEMY_CONTACT_RANGE_TILES) {
         const now = this.now();
         if (now - enemy.lastContactAt >= ENEMY_CONTACT_COOLDOWN_MS) {
           enemy.lastContactAt = now;
           this.damagePlayer(target, contactDamage);
         }
       }
-    } else if (distFromSpawn > 0.3) {
-      // No target: drift back toward spawn (a simple wander-home, not a full wander pattern).
-      const dx = enemy.spawnX - enemy.x;
-      const dy = enemy.spawnY - enemy.y;
-      const len = Math.hypot(dx, dy);
-      moveX = dx / len;
-      moveY = dy / len;
     }
 
     if (moveX !== 0 || moveY !== 0) {
       const dist = speed * dtSeconds;
       const targetX = enemy.x + moveX * dist;
       const targetY = enemy.y + moveY * dist;
-      if (!this.isEnemyBlocked(enemy.zone, targetX, enemy.y)) enemy.x = targetX;
-      if (!this.isEnemyBlocked(enemy.zone, enemy.x, targetY)) enemy.y = targetY;
+      if (!this.isEnemyBlocked(targetX, enemy.y)) enemy.x = targetX;
+      if (!this.isEnemyBlocked(enemy.x, targetY)) enemy.y = targetY;
     }
   }
 
-  /** The boss never moves — it telegraphs, then hits every living player within BOSS_ATTACK_RADIUS_TILES in its zone. No passive contact damage: the telegraphed cycle is its only damage source. */
+  /** The boss never moves — it telegraphs, then hits every living player within BOSS_ATTACK_RADIUS_TILES. No passive contact damage: the telegraphed cycle is its only damage source. */
   private tickBoss(enemy: EnemyState, _dtSeconds: number): void {
     const now = this.now();
     if (now < enemy.nextActionAt) return;
@@ -520,16 +357,16 @@ export class Room {
     enemy.telegraphing = false;
     enemy.nextActionAt = now + BOSS_COOLDOWN_MS;
     for (const player of this.players.values()) {
-      if (!player.alive || player.zone !== enemy.zone) continue;
+      if (!player.alive) continue;
       if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= BOSS_ATTACK_RADIUS_TILES) {
         this.damagePlayer(player, BOSS_ATTACK_DAMAGE);
       }
     }
   }
 
-  /** Enemies use the same zone-qualified solid-cell checks as players, but ignore other enemies/players (no enemy-enemy or enemy-player collision, only contact-damage proximity). */
-  private isEnemyBlocked(zone: Zone, x: number, y: number): boolean {
-    return this.isCellBlocked(zone, Math.floor(x), Math.floor(y));
+  /** Enemies use the same solid-cell checks as players, but ignore other enemies/players (no enemy-enemy or enemy-player collision, only contact-damage proximity). */
+  private isEnemyBlocked(x: number, y: number): boolean {
+    return this.isCellBlocked(Math.floor(x), Math.floor(y));
   }
 
   getEnemies(): EnemyView[] {
@@ -538,7 +375,6 @@ export class Room {
       .map((e) => ({
         id: e.id,
         kind: e.kind,
-        zone: e.zone,
         x: e.x,
         y: e.y,
         health: e.health,
@@ -551,15 +387,21 @@ export class Room {
     return this.enemies.get(id);
   }
 
+  /** The room's shared win condition: true once every enemy ever placed on the map has been killed. A room with zero enemies (e.g. a bare test fixture) is never "won" by default — only a kill transitions this to true. */
+  allEnemiesDefeated(): boolean {
+    if (this.enemies.size === 0) return false;
+    return [...this.enemies.values()].every((e) => !e.alive);
+  }
+
   /**
    * Validates and applies a player's melee attack on an enemy. Range,
    * cooldown, alive-target, and alive-attacker are all checked server-side —
    * the client reports only *who* it's attacking, never damage or timing.
-   * Damage, the alive->dead transition, and loot payout all happen inside
-   * this one synchronous call, so two "simultaneous" killing blows are
-   * actually sequential turns of the event loop: whichever request runs
-   * first sees the enemy alive and kills it; the second sees it already
-   * dead and gets `already_dead`, never a second loot grant.
+   * Damage and the alive->dead transition happen inside this one
+   * synchronous call, so two "simultaneous" killing blows are actually
+   * sequential turns of the event loop: whichever request runs first sees
+   * the enemy alive and kills it; the second sees it already dead and gets
+   * `already_dead`.
    */
   attack(playerId: string, targetId: string, requestId: string): ActionResult {
     return this.withDedupe("attack", playerId, requestId, () => this.doAttack(playerId, targetId));
@@ -573,7 +415,6 @@ export class Room {
     const enemy = this.enemies.get(targetId);
     if (!enemy) return { ok: false, reason: "unknown_target" };
     if (!enemy.alive) return { ok: false, reason: "already_dead" };
-    if (enemy.zone !== player.zone) return { ok: false, reason: "wrong_zone" };
 
     const now = this.now();
     if (now - player.lastAttackAt < ATTACK_COOLDOWN_MS) return { ok: false, reason: "on_cooldown" };
@@ -585,14 +426,9 @@ export class Room {
     const damage = BASE_ATTACK_DAMAGE + (player.inventory.sword > 0 ? SWORD_BONUS_DAMAGE : 0);
     enemy.health = Math.max(0, enemy.health - damage);
 
-    if (enemy.kind === "boss") {
-      enemy.contributors.add(playerId);
-    }
-
     const died = enemy.health === 0;
     if (died) {
       enemy.alive = false;
-      this.handleEnemyDeath(enemy);
     }
 
     return {
@@ -600,53 +436,8 @@ export class Room {
       enemyHealth: enemy.health,
       enemyDied: died,
       damageDealt: damage,
+      allEnemiesDefeated: died ? this.allEnemiesDefeated() : undefined,
     };
-  }
-
-  /** One-shot loot/respawn handling, called exactly once per enemy death — never from anywhere else. */
-  private handleEnemyDeath(enemy: EnemyState): void {
-    if (enemy.kind === "boss") {
-      // Every contributor gets exactly one ancient_core, granted inside this
-      // same synchronous death transition — there is no window for a
-      // duplicate or a missed grant.
-      const alreadyMarked = this.persistence.bossDefeated ? !this.persistence.bossDefeated() : false;
-      // Set in-memory regardless of alreadyMarked: a redundant call means the
-      // DB already knew, but this Room instance's own flag must still flip so
-      // beacon.activate becomes reachable without waiting for a restart.
-      this.bossAlreadyDefeated = true;
-      if (alreadyMarked) return; // a redundant death-handling call (shouldn't happen, but never re-grant)
-      for (const contributorId of enemy.contributors) {
-        const contributor = this.players.get(contributorId);
-        if (!contributor) {
-          // Evicted (disconnected past their grace window) before this kill
-          // landed — queue the reward durably rather than silently dropping
-          // it. Claimed automatically the next time this stable identity
-          // joins (see net.ts's room.join handler).
-          this.persistence.grantPendingReward?.(contributorId, "ancient_core", 1, "boss_kill");
-          continue;
-        }
-        this.addItem(contributor, "ancient_core", 1);
-        this.persistInventory(contributor);
-      }
-      return;
-    }
-
-    // Trash enemies respawn fresh at their spawn point after a delay — timed
-    // and applied by tick()'s own respawnAt check (see above), driven by the
-    // same injected clock as everything else in Room. No setTimeout: a real
-    // timer would run on wall-clock time regardless of an injected fake
-    // clock, and would outlive this Room instance with nothing to cancel it.
-    // Night-only wanderers only ever exist during night (despawnNightWanderers
-    // clears them outright, dead or alive, the instant day breaks), so they
-    // always use the shorter night respawn timer rather than the standard one.
-    enemy.respawnAt = this.now() + (enemy.nightOnly ? WANDERER_NIGHT_RESPAWN_MS : ENEMY_RESPAWN_MS);
-  }
-
-  /** The tile grid and dimensions for a given zone — the dungeon is a disjoint coordinate space with its own grid, not a region of the overworld's. */
-  private zoneBounds(zone: Zone): { width: number; height: number; tiles: MapTile[] } {
-    return zone === "overworld"
-      ? { width: this.map.width, height: this.map.height, tiles: this.map.tiles }
-      : { width: this.map.dungeon.width, height: this.map.dungeon.height, tiles: this.map.dungeon.tiles };
   }
 
   private movePlayer(player: InternalPlayer, dtSeconds: number): void {
@@ -659,18 +450,17 @@ export class Room {
 
     const targetX = player.x + nx * dist;
     const targetY = player.y + ny * dist;
-    const bounds = this.zoneBounds(player.zone);
 
-    if (!this.isBlocked(player.zone, targetX, player.y)) player.x = this.clampToMap(targetX, bounds.width);
-    if (!this.isBlocked(player.zone, player.x, targetY)) player.y = this.clampToMap(targetY, bounds.height);
+    if (!this.isBlocked(targetX, player.y)) player.x = this.clampToMap(targetX, this.map.width);
+    if (!this.isBlocked(player.x, targetY)) player.y = this.clampToMap(targetY, this.map.height);
   }
 
   private clampToMap(value: number, size: number): number {
     return clamp(value, PLAYER_RADIUS, size - PLAYER_RADIUS);
   }
 
-  /** True if a player-sized circle centred at (x, y) in `zone` would overlap a solid tile, object, or placed building. */
-  private isBlocked(zone: Zone, x: number, y: number): boolean {
+  /** True if a player-sized circle centred at (x, y) would overlap a solid tile, object, or placed building. */
+  private isBlocked(x: number, y: number): boolean {
     const offsets = [
       [0, 0],
       [PLAYER_RADIUS, 0],
@@ -681,19 +471,18 @@ export class Room {
     for (const [ox, oy] of offsets) {
       const cx = Math.floor(x + (ox ?? 0));
       const cy = Math.floor(y + (oy ?? 0));
-      if (this.isCellBlocked(zone, cx, cy)) return true;
+      if (this.isCellBlocked(cx, cy)) return true;
     }
     return false;
   }
 
-  /** True if the integer cell (cx, cy) in `zone` is out of bounds or occupied by solid terrain, a world object, or (overworld only) a building. */
-  private isCellBlocked(zone: Zone, cx: number, cy: number): boolean {
-    const bounds = this.zoneBounds(zone);
-    if (cx < 0 || cy < 0 || cx >= bounds.width || cy >= bounds.height) return true;
-    const tile = bounds.tiles[cy * bounds.width + cx];
+  /** True if the integer cell (cx, cy) is out of bounds or occupied by solid terrain, a world object, or a building. */
+  private isCellBlocked(cx: number, cy: number): boolean {
+    if (cx < 0 || cy < 0 || cx >= this.map.width || cy >= this.map.height) return true;
+    const tile = this.map.tiles[cy * this.map.width + cx];
     if (tile && SOLID_TERRAIN.has(tile.terrain)) return true;
-    if (this.solidCells.has(zoneCellKey(zone, cx, cy))) return true;
-    if (zone === "overworld" && this.solidBuildingCells.has(zoneCellKey("overworld", cx, cy))) return true;
+    if (this.solidCells.has(cellKey(cx, cy))) return true;
+    if (this.solidBuildingCells.has(cellKey(cx, cy))) return true;
     return false;
   }
 
@@ -718,7 +507,7 @@ export class Room {
    * repeated request (client retry, network blip) returns the cached result
    * of the first attempt instead of re-running `fn`, so retried actions
    * never double-consume materials or double-grant rewards. Shared by
-   * every mutating action (gather, craft, build, farm).
+   * every mutating action (gather, craft, build, chest, attack).
    */
   private withDedupe(kind: string, playerId: string, requestId: string, fn: () => ActionResult): ActionResult {
     const dedupeKey = `${kind}:${playerId}:${requestId}`;
@@ -752,7 +541,6 @@ export class Room {
 
     const object = this.objectsById.get(objectId);
     if (!object) return { ok: false, reason: "unknown_object" };
-    if ((object.zone ?? "overworld") !== player.zone) return { ok: false, reason: "wrong_zone" };
 
     if (!object.resource) return { ok: false, reason: "not_gatherable" };
     if (object.resource.remaining <= 0) return { ok: false, reason: "depleted" };
@@ -836,10 +624,6 @@ export class Room {
     const player = this.players.get(playerId);
     if (!player) return { ok: false, reason: "unknown_player" };
     if (!player.alive) return { ok: false, reason: "dead" };
-    // Buildings are an overworld-only concept — the dungeon is a fixed
-    // chamber with no construction, so a build request only ever makes
-    // sense from a player who is actually in the overworld.
-    if (player.zone !== "overworld") return { ok: false, reason: "wrong_zone", recipeId };
 
     const recipe = getRecipe(recipeId);
     if (!recipe) return { ok: false, reason: "unknown_recipe" };
@@ -854,7 +638,7 @@ export class Room {
     const dist = Math.hypot(player.x - (cx + 0.5), player.y - (cy + 0.5));
     if (dist > BUILD_RANGE_TILES) return { ok: false, reason: "too_far", recipeId };
 
-    if (this.isCellBlocked("overworld", cx, cy) || this.buildingsByCell.has(zoneCellKey("overworld", cx, cy))) {
+    if (this.isCellBlocked(cx, cy) || this.buildingsByCell.has(cellKey(cx, cy))) {
       return { ok: false, reason: "cell_occupied", recipeId };
     }
 
@@ -886,14 +670,6 @@ export class Room {
     this.registerBuilding(building);
     if (building.kind === "chest") {
       this.chestInventories.set(building.id, emptyInventory());
-    }
-    if (building.kind === "farm_plot") {
-      this.farmPlots.set(building.id, {
-        buildingId: building.id,
-        seedKind: null,
-        plantedAt: null,
-        wateredAt: null,
-      });
     }
     this.persistInventory(player);
 
@@ -931,10 +707,6 @@ export class Room {
     if (!player) return { ok: false, reason: "unknown_player" };
     if (!player.alive) return { ok: false, reason: "dead" };
     if (qty <= 0) return { ok: false, reason: "invalid_quantity" };
-    // Chests are only ever placed in the overworld (see doBuild), so a
-    // dungeon-side player can never be in range of one anyway — this is an
-    // explicit check rather than relying on that incidentally being true.
-    if (player.zone !== "overworld") return { ok: false, reason: "wrong_zone" };
 
     const chest = this.buildingsById.get(chestId);
     if (!chest || chest.kind !== "chest") return { ok: false, reason: "unknown_chest" };
@@ -965,109 +737,7 @@ export class Room {
     return { ok: true, inventory: { ...player.inventory }, chestItems: { ...chestItems } };
   }
 
-  /** The farm plot's current stage, derived purely from its stored timestamps and the current time — see computeCropStage. */
-  getCropStage(buildingId: string): CropStage | undefined {
-    const plot = this.farmPlots.get(buildingId);
-    if (!plot) return undefined;
-    return computeCropStage(plot, this.now());
-  }
-
-  getFarmPlots(): FarmPlotState[] {
-    return [...this.farmPlots.values()];
-  }
-
-  /**
-   * Validates and applies plant/water/harvest. Every sub-action requires
-   * proximity to the plot. plant requires an empty plot and consumes a seed;
-   * water just stamps wateredAt; harvest requires the derived stage to be
-   * "mature" and, on success, clears the plot back to empty in the same call
-   * that grants the reward — so a second harvest attempt immediately reads
-   * as "not_mature"/empty rather than being able to re-claim the same crop.
-   */
-  farmAction(
-    playerId: string,
-    buildingId: string,
-    action: FarmAction,
-    seedKind: ItemKind | undefined,
-    requestId: string,
-  ): ActionResult {
-    return this.withDedupe("farm", playerId, requestId, () =>
-      this.doFarmAction(playerId, buildingId, action, seedKind),
-    );
-  }
-
-  private doFarmAction(
-    playerId: string,
-    buildingId: string,
-    action: FarmAction,
-    seedKind: ItemKind | undefined,
-  ): ActionResult {
-    const player = this.players.get(playerId);
-    if (!player) return { ok: false, reason: "unknown_player" };
-    if (!player.alive) return { ok: false, reason: "dead" };
-    // Farm plots are only ever placed in the overworld (see doBuild).
-    if (player.zone !== "overworld") return { ok: false, reason: "wrong_zone" };
-
-    const building = this.buildingsById.get(buildingId);
-    if (!building || building.kind !== "farm_plot") return { ok: false, reason: "unknown_plot" };
-
-    const plot = this.farmPlots.get(buildingId);
-    if (!plot) return { ok: false, reason: "unknown_plot" };
-
-    const dist = Math.hypot(player.x - (building.x + 0.5), player.y - (building.y + 0.5));
-    if (dist > FARM_RANGE_TILES) return { ok: false, reason: "too_far" };
-
-    const now = this.now();
-    const stage = computeCropStage(plot, now);
-
-    if (action === "plant") {
-      if (stage !== "empty") return { ok: false, reason: "plot_occupied" };
-      if (!seedKind || !(seedKind in SEED_TO_CROP)) return { ok: false, reason: "invalid_seed" };
-      if (player.inventory[seedKind] < 1) return { ok: false, reason: "insufficient_materials" };
-
-      this.removeItem(player, seedKind, 1);
-      const newPlot: FarmPlotState = { buildingId, seedKind, plantedAt: now, wateredAt: null };
-      this.farmPlots.set(buildingId, newPlot);
-      this.persistence.farmPlot?.(newPlot);
-      this.persistInventory(player);
-
-      return {
-        ok: true,
-        inventory: { ...player.inventory },
-        cropStage: computeCropStage(newPlot, now),
-        buildingId,
-        farmPlot: newPlot,
-      };
-    }
-
-    if (action === "water") {
-      if (stage === "empty") return { ok: false, reason: "plot_empty" };
-      if (stage === "mature") return { ok: false, reason: "already_mature" };
-
-      const newPlot: FarmPlotState = { ...plot, wateredAt: now };
-      this.farmPlots.set(buildingId, newPlot);
-      this.persistence.farmPlot?.(newPlot);
-
-      return { ok: true, cropStage: computeCropStage(newPlot, now), buildingId, farmPlot: newPlot };
-    }
-
-    // harvest
-    if (stage !== "mature") return { ok: false, reason: "not_mature" };
-    const cropKind = SEED_TO_CROP[plot.seedKind!];
-    if (!cropKind) return { ok: false, reason: "invalid_seed" };
-
-    const granted = this.addItem(player, cropKind, 1);
-    if (granted <= 0) return { ok: false, reason: "inventory_full" };
-
-    const newPlot: FarmPlotState = { buildingId, seedKind: null, plantedAt: null, wateredAt: null };
-    this.farmPlots.set(buildingId, newPlot);
-    this.persistence.farmPlot?.(newPlot);
-    this.persistInventory(player);
-
-    return { ok: true, inventory: { ...player.inventory }, cropStage: "empty", buildingId, farmPlot: newPlot };
-  }
-
-  /** Whether it's currently night, purely derived from elapsed time since world creation — see computeTimeOfDay. */
+  /** Whether it's currently night — visual/ambience only (see constants.ts's note); derived purely from elapsed time since world creation, see computeTimeOfDay. */
   isNight(): boolean {
     return computeTimeOfDay(this.worldCreatedAt, this.now()).isNight;
   }
@@ -1105,7 +775,6 @@ export class Room {
     const spawn = this.map.spawnPoint;
     player.health = MAX_HEALTH;
     player.alive = true;
-    player.zone = "overworld";
     player.x = spawn.x + 0.5;
     player.y = spawn.y + 0.5;
     player.inputDx = 0;
@@ -1114,154 +783,10 @@ export class Room {
 
     return { ok: true, health: player.health };
   }
-
-  /** The beacon's current shared progress — the static requirements alongside the durable totals, so a client can render both from one message. */
-  getBeaconProgress(): BeaconProgress {
-    return {
-      wood: this.beaconMaterials.wood,
-      stone: this.beaconMaterials.stone,
-      ancientCore: this.beaconMaterials.ancient_core,
-      requiredWood: BEACON_REQUIRED_WOOD,
-      requiredStone: BEACON_REQUIRED_STONE,
-      requiredAncientCore: BEACON_REQUIRED_ANCIENT_CORE,
-      bossDefeated: this.bossAlreadyDefeated,
-      activated: this.beaconActivated,
-    };
-  }
-
-  private beaconObject(): MapObject | undefined {
-    return this.map.dungeon.objects.find((o) => o.kind === "ancient_beacon");
-  }
-
-  /**
-   * Validates and applies a beacon material deposit. The player must be in
-   * the dungeon, in range of the beacon, and hold at least `qty` of `kind` —
-   * deposited materials are removed from inventory and added to the shared,
-   * durable pool in the same synchronous call, so two concurrent deposits
-   * from different players both land (this is additive, not a single slot
-   * a second request could race the first out of — unlike beacon.activate,
-   * which is a one-shot transition and does need that race resolved).
-   */
-  depositBeacon(playerId: string, kind: BeaconMaterial, qty: number, requestId: string): ActionResult {
-    return this.withDedupe("beacon-deposit", playerId, requestId, () => this.doDepositBeacon(playerId, kind, qty));
-  }
-
-  private doDepositBeacon(playerId: string, kind: BeaconMaterial, qty: number): ActionResult {
-    const player = this.players.get(playerId);
-    if (!player) return { ok: false, reason: "unknown_player" };
-    if (!player.alive) return { ok: false, reason: "dead" };
-    if (player.zone !== "dungeon") return { ok: false, reason: "wrong_zone" };
-    if (qty <= 0) return { ok: false, reason: "invalid_quantity" };
-
-    const beacon = this.beaconObject();
-    if (!beacon) return { ok: false, reason: "unknown_object" };
-    const dist = Math.hypot(player.x - (beacon.x + 0.5), player.y - (beacon.y + 0.5));
-    if (dist > BEACON_RANGE_TILES) return { ok: false, reason: "too_far" };
-
-    if (player.inventory[kind] < qty) return { ok: false, reason: "insufficient_materials" };
-
-    this.removeItem(player, kind, qty);
-    this.beaconMaterials[kind] += qty;
-    this.persistence.beaconDeposit?.(kind, qty);
-    this.persistInventory(player);
-
-    return { ok: true, inventory: { ...player.inventory } };
-  }
-
-  /**
-   * Validates and applies beacon activation: the player must be in the
-   * dungeon, in range, the boss must already be defeated, and every
-   * material requirement must be met. The persistence layer's own atomic
-   * check (activateBeacon's WHERE completed_at IS NULL) is what actually
-   * resolves a race between two concurrent activate requests — in-memory
-   * `beaconActivated` is set only after persistence confirms this call won,
-   * so a losing concurrent call sees `already_activated` rather than a
-   * second victory broadcast going out.
-   */
-  activateBeacon(playerId: string, requestId: string): ActionResult {
-    return this.withDedupe("beacon-activate", playerId, requestId, () => this.doActivateBeacon(playerId));
-  }
-
-  private doActivateBeacon(playerId: string): ActionResult {
-    const player = this.players.get(playerId);
-    if (!player) return { ok: false, reason: "unknown_player" };
-    if (!player.alive) return { ok: false, reason: "dead" };
-    if (player.zone !== "dungeon") return { ok: false, reason: "wrong_zone" };
-    if (this.beaconActivated) return { ok: false, reason: "already_activated" };
-    if (!this.bossAlreadyDefeated) return { ok: false, reason: "boss_not_defeated" };
-
-    const beacon = this.beaconObject();
-    if (!beacon) return { ok: false, reason: "unknown_object" };
-    const dist = Math.hypot(player.x - (beacon.x + 0.5), player.y - (beacon.y + 0.5));
-    if (dist > BEACON_RANGE_TILES) return { ok: false, reason: "too_far" };
-
-    if (
-      this.beaconMaterials.wood < BEACON_REQUIRED_WOOD ||
-      this.beaconMaterials.stone < BEACON_REQUIRED_STONE ||
-      this.beaconMaterials.ancient_core < BEACON_REQUIRED_ANCIENT_CORE
-    ) {
-      return { ok: false, reason: "insufficient_materials" };
-    }
-
-    if (this.persistence.activateBeacon && !this.persistence.activateBeacon()) {
-      // Lost the race to a concurrent activate that committed first.
-      this.beaconActivated = true;
-      return { ok: false, reason: "already_activated" };
-    }
-
-    this.beaconActivated = true;
-    return { ok: true };
-  }
-
-  /**
-   * Validates and applies a zone transition through a specific
-   * dungeon_entrance/dungeon_exit object: the object must exist, the player
-   * must be in that object's own zone (never the target zone — you can't
-   * "enter the dungeon" by using the exit that's already inside it) and
-   * within range of it, and `target` must actually be the other zone. On
-   * success the player's position is moved to the destination zone's own
-   * entry point, so they never retain overworld/dungeon coordinates that
-   * happen to overlap the other zone's space.
-   */
-  enterZone(playerId: string, objectId: string, target: Zone, requestId: string): ActionResult {
-    return this.withDedupe("zone-enter", playerId, requestId, () => this.doEnterZone(playerId, objectId, target));
-  }
-
-  private doEnterZone(playerId: string, objectId: string, target: Zone): ActionResult {
-    const player = this.players.get(playerId);
-    if (!player) return { ok: false, reason: "unknown_player" };
-    if (!player.alive) return { ok: false, reason: "dead" };
-
-    const object = this.objectsById.get(objectId);
-    if (!object) return { ok: false, reason: "unknown_object" };
-    if (object.kind !== "dungeon_entrance" && object.kind !== "dungeon_exit") {
-      return { ok: false, reason: "not_a_zone_transition" };
-    }
-
-    const objectZone = object.zone ?? "overworld";
-    if (objectZone !== player.zone) return { ok: false, reason: "wrong_zone" };
-    if (target === player.zone) return { ok: false, reason: "already_in_zone" };
-
-    const dist = Math.hypot(player.x - (object.x + 0.5), player.y - (object.y + 0.5));
-    if (dist > ZONE_TRANSITION_RANGE_TILES) return { ok: false, reason: "too_far" };
-
-    player.zone = target;
-    if (target === "dungeon") {
-      player.x = this.map.dungeon.entryPoint.x + 0.5;
-      player.y = this.map.dungeon.entryPoint.y + 0.5;
-    } else {
-      player.x = this.map.dungeonEntrance.x + 0.5;
-      player.y = this.map.dungeonEntrance.y + 0.5;
-    }
-    player.inputDx = 0;
-    player.inputDy = 0;
-
-    return { ok: true };
-  }
 }
 
-function zoneCellKey(zone: Zone, x: number, y: number): string {
-  return `${zone}:${x},${y}`;
+function cellKey(x: number, y: number): string {
+  return `${x},${y}`;
 }
 
 function clamp(value: number, min: number, max: number): number {

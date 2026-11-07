@@ -69,9 +69,8 @@ describe("drawObject's sprite-drawing branch", () => {
 
   it("bottom-anchors a sprite taller than one tile the same way drawTile/drawEnemy already do", () => {
     const { ctx, calls } = fakeCtx();
-    const tallObj: MapObject = { id: "o2", kind: "ancient_beacon", x: 0, y: 0 };
-    drawObject(ctx, tallObj, 0, 0);
-    const rect = OBJECT_SPRITES.ancient_beacon!;
+    drawObject(ctx, baseObj, 0, 0);
+    const rect = OBJECT_SPRITES.bush!;
     const expectedDestY = 0 - (rect.h - TILE_SIZE);
     expect(calls.drawImage![1]).toBeCloseTo(expectedDestY);
     expect(calls.drawImage![3]).toBe(rect.h);

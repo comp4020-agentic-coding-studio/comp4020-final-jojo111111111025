@@ -11,10 +11,10 @@
  * low-variance (flat-colour) 16x16 regions, then confirmed by visual crop,
  * not guessed from the sheet's thumbnail.
  */
-import type { EnemyKind, ObjectKind, TerrainKind } from "../shared/types.js";
+import type { BuildingKind, EnemyKind, ObjectKind, TerrainKind } from "../shared/types.js";
 
 export interface SpriteRect {
-  sheet: "forest" | "mountain" | "dungeon" | "tiny-rpg-town" | "serene-village";
+  sheet: "forest" | "mountain" | "dungeon" | "tiny-rpg-town" | "serene-village" | "mountain-cutouts";
   x: number;
   y: number;
   w: number;
@@ -27,6 +27,7 @@ const SHEET_PATHS: Record<SpriteRect["sheet"], string> = {
   dungeon: "/assets/dungeon/tileset.png",
   "tiny-rpg-town": "/assets/tiny-rpg-town/bush-2.png",
   "serene-village": "/assets/serene-village/terrains.png",
+  "mountain-cutouts": "/assets/mountain-cutouts/boulder.png",
 };
 
 /**
@@ -75,11 +76,6 @@ export const TERRAIN_SPRITES: Partial<Record<TerrainKind, SpriteRect>> = {
   // pixels, confirmed tileable (see PROCESS.md's Stage 5 section for the
   // seam check this was verified against before being accepted).
   water: { sheet: "serene-village", x: 224, y: 224, w: 16, h: 16 },
-  // Calciumtrice dungeon tileset: floor and wall. The wall sprite is
-  // 16x32 (taller than the tile grid) by the author's own design — see
-  // CREDITS.md. render.ts's drawTile bottom-anchors it to compensate.
-  dungeon_floor: { sheet: "dungeon", x: 16, y: 144, w: 16, h: 16 },
-  dungeon_wall: { sheet: "dungeon", x: 16, y: 64, w: 16, h: 32 },
 };
 
 /**
@@ -122,10 +118,10 @@ export const WATER_GRASS_EDGE_SPRITE: SpriteRect = {
 };
 
 /**
- * One sprite per ObjectKind that has a genuinely identifiable match in an
- * approved pack — not one per kind. `tree` and `rock` are deliberately
- * absent — see each one's own reasoning below; `bush` is sprited as of
- * Stage 4 Phase B2.
+ * One sprite per ObjectKind that has a genuinely identifiable match. `tree`
+ * is deliberately absent — see its own reasoning below; `bush` was sprited
+ * in Stage 4 Phase B2, `rock` in the "real pictures" pass that followed the
+ * gameplay-simplification redesign.
  *
  * `tree`: the forest sheet's own canopy is one continuous overlapping mass
  * (every 16px slice of it is a near-identical repeating edge pattern, not
@@ -141,34 +137,25 @@ export const WATER_GRASS_EDGE_SPRITE: SpriteRect = {
  * render.ts's OBJECT_COLORS flat-colour fallback, a deliberate decision,
  * not an oversight.
  *
- * `rock`: the mountain sheet's one boulder-shaped sprite sits on a fully
- * opaque cave-floor background — part of an interior scene, not a
- * droppable prop — and its cliff-face tiles are diagonal terrain-autotile
- * pieces, not a freestanding rock. Tiny RPG Town's one standalone rock
- * candidate (reviewed in Phase B1) is a small, warm beige/tan-coloured
- * pebble that reads as a loaf of bread or a dirt clump rather than a rock,
- * and clashes with this project's existing grey-toned rock terrain
- * (TERRAIN_SPRITES.rock, from the mountain sheet) — not used, by explicit
- * decision, not because no candidate existed.
+ * `rock`: the mountain sheet has one genuinely isolated boulder sprite —
+ * round, grey, unambiguous — but unlike every other sprite in this file it
+ * sits on a fully *opaque* scene background (confirmed by alpha-channel
+ * scan: the entire 32x32 region reads alpha 255), so it can't be referenced
+ * in place the way every other sprite rect is. `public/assets/mountain-
+ * cutouts/boulder.png` is a new, derived file — not a byte-for-byte copy of
+ * source art like every other asset in this project — produced by a
+ * colour-distance mask against the scene's own flat background colour
+ * (sampled from a corner pixel, threshold tuned by visual inspection to
+ * keep the boulder's lighter highlights while still cutting the
+ * background), then re-encoded as its own transparent PNG. This is an
+ * explicit, documented exception to this project's "cropped, never
+ * modified" asset policy — see PROCESS.md and CREDITS.md for the
+ * generation method and why no unmodified crop was possible.
  */
 export const OBJECT_SPRITES: Partial<Record<ObjectKind, SpriteRect>> = {
   // Calciumtrice dungeon tileset, "FIRE 16x6" section: an isolated
   // flame-on-transparent sprite.
   campfire: { sheet: "dungeon", x: 240, y: 512, w: 16, h: 16 },
-  // Calciumtrice dungeon tileset, "ALTARS" section: a statue on a stone
-  // pedestal. Taller than one tile grid cell (32px, 2 tile-rows), like
-  // dungeon_wall — render.ts's drawObject bottom-anchors it the same way.
-  ancient_beacon: { sheet: "dungeon", x: 304, y: 304, w: 16, h: 32 },
-  // Calciumtrice dungeon tileset, "DOORS+FENCES 16x32" section: one panel
-  // of a wooden double-door, with its handle — a single 16-wide slice of a
-  // wider 4-tile door art, chosen (over the full width) because every
-  // MapObject occupies exactly one tile cell, same as dungeon_wall/floor.
-  // Taller than one row (32px) like dungeon_wall — bottom-anchored the
-  // same way.
-  dungeon_entrance: { sheet: "dungeon", x: 16, y: 176, w: 16, h: 32 },
-  // Calciumtrice dungeon tileset, "FLOOR STAIRS 32x32" section: a stone
-  // staircase, taller than one tile (32px) like dungeon_wall/ancient_beacon.
-  dungeon_exit: { sheet: "dungeon", x: 0, y: 240, w: 16, h: 32 },
   // ansimuz "Tiny RPG Town" (CC0, free tier — see CREDITS.md), a genuinely
   // isolated conifer-shaped bush with a transparent background, unlike
   // every candidate previously found in the forest/dungeon sheets (which
@@ -181,6 +168,46 @@ export const OBJECT_SPRITES: Partial<Record<ObjectKind, SpriteRect>> = {
   // the way the pack's tree sprites would have — see this constant's own
   // doc-comment for why those were rejected.
   bush: { sheet: "tiny-rpg-town", x: 3, y: 1, w: 25, h: 30 },
+  // See this constant's own doc-comment for why this is a derived cutout
+  // file rather than a plain crop of mountain/tileset.png.
+  rock: { sheet: "mountain-cutouts", x: 0, y: 0, w: 32, h: 32 },
+};
+
+/**
+ * One sprite per placeable BuildingKind that has a genuinely identifiable
+ * match — `campfire` is deliberately absent here since it reuses
+ * OBJECT_SPRITES.campfire (a placed campfire building and the world-gen
+ * campfire object are the same flame sprite; see render.ts's drawBuilding).
+ * All three found here come from Calciumtrice's dungeon sheet (CONTAINERS
+ * 16x16 section) and ansimuz's forest sheet (its wood-plank/fence props),
+ * both already-approved packs — no new license obligations.
+ *
+ * `chest`: the dungeon sheet's "CONTAINERS 16x16" section has a genuine
+ * closed treasure chest (wood-bound lid, brass trim), transparent
+ * background, unambiguous — the second, more armoured-looking container
+ * cell right next to it was not used (reads as a different, sturdier chest
+ * variant, not a better match for this game's single generic chest).
+ *
+ * `wall`: the forest sheet's wood-prop cluster (the same area ansimuz drew
+ * fence posts and log piles) has a standalone stack of three tightly-packed
+ * vertical planks, transparent background — reads as a short section of
+ * plank wall, which is what this building represents.
+ *
+ * `workbench`: the dungeon sheet's "CONTAINERS 16x16" section also has a
+ * slatted wooden crate (two horizontal-ribbed panels stacked), transparent
+ * background — chosen over the sheet's barrel and sack containers because
+ * its flat horizontal ribbing reads more like a work surface/bench than a
+ * storage vessel does.
+ *
+ * `floor`: the forest sheet's same wood-prop cluster has a bundle of
+ * horizontally-stacked planks, transparent background — reads as a laid
+ * section of wood flooring.
+ */
+export const BUILDING_SPRITES: Partial<Record<BuildingKind, SpriteRect>> = {
+  chest: { sheet: "dungeon", x: 32, y: 307, w: 16, h: 13 },
+  wall: { sheet: "forest", x: 464, y: 304, w: 36, h: 31 },
+  workbench: { sheet: "dungeon", x: 2, y: 305, w: 12, h: 15 },
+  floor: { sheet: "forest", x: 496, y: 304, w: 32, h: 16 },
 };
 
 /**

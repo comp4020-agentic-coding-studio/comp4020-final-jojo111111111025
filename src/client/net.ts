@@ -1,11 +1,10 @@
-import type { Building, DungeonMap, FarmPlotState, ItemKind, WorldMap, Zone } from "../shared/types.js";
+import type { Building, ItemKind, WorldMap } from "../shared/types.js";
 import { ITEM_KINDS, SOLID_OBJECTS, SOLID_TERRAIN } from "../shared/types.js";
 
 export interface SnapshotPlayer {
   id: string;
   x: number;
   y: number;
-  zone: Zone;
   health: number;
   alive: boolean;
   inventory: Record<ItemKind, number>;
@@ -14,23 +13,11 @@ export interface SnapshotPlayer {
 export interface SnapshotEnemy {
   id: string;
   kind: string;
-  zone: Zone;
   x: number;
   y: number;
   health: number;
   maxHealth: number;
   telegraphing: boolean;
-}
-
-export interface BeaconProgress {
-  wood: number;
-  stone: number;
-  ancientCore: number;
-  requiredWood: number;
-  requiredStone: number;
-  requiredAncientCore: number;
-  bossDefeated: boolean;
-  activated: boolean;
 }
 
 export interface RosterPlayer {
@@ -42,12 +29,10 @@ export interface RosterPlayer {
 export interface ClientHandlers {
   onJoined: (playerId: string, roomCode: string) => void;
   onSnapshot: (
-    world: WorldMap & { dungeon: DungeonMap },
+    world: WorldMap,
     players: SnapshotPlayer[],
     buildings: Building[],
-    farmPlots: FarmPlotState[],
     enemies: SnapshotEnemy[],
-    beaconProgress: BeaconProgress,
     serverTime: number,
   ) => void;
   onRoster: (players: RosterPlayer[]) => void;
@@ -65,8 +50,6 @@ export interface ClientHandlers {
     recipeId?: string;
     buildingId?: string;
     chestItems?: Record<ItemKind, number>;
-    cropStage?: string;
-    farmPlot?: FarmPlotState;
     health?: number;
     enemyHealth?: number;
     enemyDied?: boolean;
@@ -81,8 +64,8 @@ export interface ClientHandlers {
     enemyDied: boolean;
   }) => void;
   onObjectDepleted: (event: { objectId: string; remaining: number }) => void;
-  onBeaconProgress: (progress: BeaconProgress) => void;
-  onBeaconVictory: (activatedBy: string) => void;
+  /** Fired exactly once, the instant the killing blow leaves every enemy on the map dead — the room's shared win condition. */
+  onGameVictory: (lastKillBy: string) => void;
   onError: (message: string) => void;
   onClose: () => void;
 }
@@ -91,22 +74,16 @@ export interface ClientHandlers {
 const TERMINAL_ERRORS = new Set(["invalid_room_code", "room_full", "superseded"]);
 
 /**
- * Updates the depleted object's `resource.remaining` in place, wherever it
- * lives. An `object.depleted` broadcast reaches every player in the room
- * regardless of which zone they're standing in, so the object may be in
- * either `world.objects` or `world.dungeon.objects` — both are checked
- * rather than assuming it matches the local player's current zone. The
- * object itself is never removed, even once `remaining` reaches 0 — it
- * stays visible (render.ts draws a depleted node differently, it doesn't
- * hide it) so a player can still see where it was and that it'll regrow.
+ * Updates the depleted object's `resource.remaining` in place. An
+ * `object.depleted` broadcast reaches every player in the room, so the
+ * object is looked up by id in `world.objects` directly. The object itself
+ * is never removed, even once `remaining` reaches 0 — it stays visible
+ * (render.ts draws a depleted node differently, it doesn't hide it) so a
+ * player can still see where it was and that it'll regrow.
  */
-export function applyObjectDepleted(
-  world: (WorldMap & { dungeon: DungeonMap }) | null,
-  event: { objectId: string; remaining: number },
-): void {
+export function applyObjectDepleted(world: WorldMap | null, event: { objectId: string; remaining: number }): void {
   if (!world) return;
-  const obj =
-    world.objects.find((o) => o.id === event.objectId) ?? world.dungeon.objects.find((o) => o.id === event.objectId);
+  const obj = world.objects.find((o) => o.id === event.objectId);
   if (obj?.resource) obj.resource.remaining = event.remaining;
 }
 
@@ -128,19 +105,18 @@ export function findGainedItem(
 }
 
 /**
- * Mirrors Room.doBuild's overworld occupancy check — isCellBlocked's
- * terrain/world-object rule, plus "any building at all on this cell
- * blocks a new one" (doBuild's own separate buildingsByCell check, which
- * is stricter than isCellBlocked alone: even a non-solid `floor` building
- * occupies its cell against a second placement) — purely for the
- * build-target preview ring's colour in main.ts. A local,
- * non-authoritative guess so the ring can read green/red before the
- * player commits to a placement, never a substitute for the server's own
- * doBuild validation, which re-checks everything server-side regardless
- * of what this says.
+ * Mirrors Room.doBuild's occupancy check — isCellBlocked's terrain/world-
+ * object rule, plus "any building at all on this cell blocks a new one"
+ * (doBuild's own separate buildingsByCell check, which is stricter than
+ * isCellBlocked alone: even a non-solid `floor` building occupies its cell
+ * against a second placement) — purely for the build-target preview ring's
+ * colour in main.ts. A local, non-authoritative guess so the ring can read
+ * green/red before the player commits to a placement, never a substitute
+ * for the server's own doBuild validation, which re-checks everything
+ * server-side regardless of what this says.
  */
 export function isBuildCellFree(
-  world: (WorldMap & { dungeon: DungeonMap }) | null,
+  world: WorldMap | null,
   buildings: ReadonlyMap<string, Building>,
   cx: number,
   cy: number,
@@ -225,15 +201,7 @@ export class GameClient {
         this.handlers.onJoined(msg.playerId, msg.roomCode);
         break;
       case "world.snapshot":
-        this.handlers.onSnapshot(
-          msg,
-          msg.players,
-          msg.buildings ?? [],
-          msg.farmPlots ?? [],
-          msg.enemies ?? [],
-          msg.beaconProgress,
-          msg.serverTime ?? Date.now(),
-        );
+        this.handlers.onSnapshot(msg, msg.players, msg.buildings ?? [], msg.enemies ?? [], msg.serverTime ?? Date.now());
         break;
       case "room.roster":
         this.handlers.onRoster(msg.players);
@@ -253,11 +221,8 @@ export class GameClient {
       case "object.depleted":
         this.handlers.onObjectDepleted(msg);
         break;
-      case "beacon.progress":
-        this.handlers.onBeaconProgress(msg);
-        break;
-      case "beacon.victory":
-        this.handlers.onBeaconVictory(msg.activatedBy);
+      case "game.victory":
+        this.handlers.onGameVictory(msg.lastKillBy);
         break;
       case "server.error":
         this.lastErrorWasTerminal = TERMINAL_ERRORS.has(msg.message);
@@ -292,33 +257,12 @@ export class GameClient {
     this.send({ type: "chest.transfer", requestId, chestId, itemKind, quantity, direction });
   }
 
-  farmAction(
-    buildingId: string,
-    action: "plant" | "water" | "harvest",
-    seedKind: string | undefined,
-    requestId: string,
-  ): void {
-    this.send({ type: "farm.action", requestId, buildingId, action, seedKind });
-  }
-
   respawn(requestId: string): void {
     this.send({ type: "player.respawn", requestId });
   }
 
   attack(targetId: string, requestId: string): void {
     this.send({ type: "combat.attack", requestId, targetId });
-  }
-
-  depositBeacon(itemKind: string, quantity: number, requestId: string): void {
-    this.send({ type: "beacon.deposit", requestId, itemKind, quantity });
-  }
-
-  activateBeacon(requestId: string): void {
-    this.send({ type: "beacon.activate", requestId });
-  }
-
-  enterZone(objectId: string, target: "overworld" | "dungeon", requestId: string): void {
-    this.send({ type: "zone.enter", requestId, objectId, target });
   }
 
   private send(message: unknown): void {

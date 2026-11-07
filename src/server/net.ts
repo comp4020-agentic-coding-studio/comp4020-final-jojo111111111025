@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { WebSocket, WebSocketServer } from "ws";
 import { DEFAULT_ROOM_CODE, RECONNECT_GRACE_MS, SNAPSHOT_MS, TICK_MS } from "../shared/constants.js";
 import { createAnonymousId, resolveIdentity, touchPlayerRecord } from "./identity.js";
-import { claimAndApplyPendingRewards, loadPlayerHealth } from "./world.js";
+import { loadPlayerHealth, loadPlayerInventory } from "./world.js";
 import { ClientMessage, MAX_CLIENT_MESSAGE_BYTES } from "../shared/messages.js";
 import { ITEM_KINDS, type ItemKind } from "../shared/types.js";
 import type { Room } from "./room.js";
@@ -11,13 +11,6 @@ import { log } from "./log.js";
 
 function isItemKind(value: string): value is ItemKind {
   return (ITEM_KINDS as readonly string[]).includes(value);
-}
-
-const BEACON_MATERIALS = ["wood", "stone", "ancient_core"] as const;
-type BeaconMaterial = (typeof BEACON_MATERIALS)[number];
-
-function isBeaconMaterial(value: string): value is BeaconMaterial {
-  return (BEACON_MATERIALS as readonly string[]).includes(value);
 }
 
 interface Connection {
@@ -172,17 +165,7 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
           log("player_reconnected", { player_id: conn.id, name: msg.name });
           room.setConnected(conn.id, true);
         } else {
-          // Claim any durably-queued rewards (e.g. a boss-kill ancient_core
-          // earned while this identity was evicted) before building the
-          // starting inventory handed to addPlayer — a reward can only ever
-          // have been queued for an identity that was *not* currently
-          // holding a room slot, so this can't double-grant something a
-          // still-connected contributor already received directly. The
-          // claim, the inventory merge, and marking the reward settled all
-          // happen inside one transaction in claimAndApplyPendingRewards, so
-          // a crash between "claimed" and "in inventory" is not possible —
-          // see that function's doc comment in world.ts.
-          const { inventory } = claimAndApplyPendingRewards(db, conn.id);
+          const inventory = loadPlayerInventory(db, conn.id);
           room.addPlayer(conn.id, msg.name, inventory, loadPlayerHealth(db, conn.id));
           log("player_joined", { player_id: conn.id, name: msg.name, room_code: roomCode });
         }
@@ -195,12 +178,9 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
           height: room.map.height,
           tiles: room.map.tiles,
           objects: room.map.objects,
-          dungeon: room.map.dungeon,
           players: room.getPlayers(),
           buildings: room.getBuildings(),
-          farmPlots: room.getFarmPlots(),
           enemies: room.getEnemies(),
-          beaconProgress: room.getBeaconProgress(),
           serverTime: Date.now(),
           worldCreatedAt: options.worldCreatedAt ?? Date.now(),
         });
@@ -341,39 +321,6 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
         return;
       }
 
-      if (msg.type === "farm.action") {
-        if (!interactLimiter.allow(conn.id)) {
-          send(socket, {
-            type: "action.result",
-            requestId: msg.requestId,
-            ok: false,
-            reason: "rate_limited",
-          });
-          return;
-        }
-        if (msg.seedKind !== undefined && !isItemKind(msg.seedKind)) {
-          send(socket, {
-            type: "action.result",
-            requestId: msg.requestId,
-            ok: false,
-            reason: "unknown_item_kind",
-          });
-          return;
-        }
-        const result = room.farmAction(conn.id, msg.buildingId, msg.action, msg.seedKind, msg.requestId);
-        send(socket, {
-          type: "action.result",
-          requestId: msg.requestId,
-          ok: result.ok,
-          reason: result.reason,
-          inventory: result.inventory,
-          cropStage: result.cropStage,
-          buildingId: result.buildingId,
-          farmPlot: result.farmPlot ?? undefined,
-        });
-        return;
-      }
-
       if (msg.type === "player.respawn") {
         const result = room.respawn(conn.id);
         send(socket, {
@@ -421,92 +368,11 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
             enemyHealth: result.enemyHealth ?? 0,
             enemyDied: result.enemyDied ?? false,
           });
-          if (result.enemyDied) {
-            const enemy = room.getEnemy(msg.targetId);
-            if (enemy?.kind === "boss") {
-              log("boss_defeated", { player_id: conn.id });
-              broadcast(connections, { type: "beacon.progress", ...room.getBeaconProgress() });
-            }
+          if (result.allEnemiesDefeated) {
+            log("game_won", { player_id: conn.id });
+            broadcast(connections, { type: "game.victory", lastKillBy: conn.id });
           }
         }
-        return;
-      }
-
-      if (msg.type === "beacon.deposit") {
-        if (!interactLimiter.allow(conn.id)) {
-          send(socket, {
-            type: "action.result",
-            requestId: msg.requestId,
-            ok: false,
-            reason: "rate_limited",
-          });
-          return;
-        }
-        if (!isBeaconMaterial(msg.itemKind)) {
-          send(socket, {
-            type: "action.result",
-            requestId: msg.requestId,
-            ok: false,
-            reason: "unknown_item_kind",
-          });
-          return;
-        }
-        const result = room.depositBeacon(conn.id, msg.itemKind, msg.quantity, msg.requestId);
-        send(socket, {
-          type: "action.result",
-          requestId: msg.requestId,
-          ok: result.ok,
-          reason: result.reason,
-          inventory: result.inventory,
-        });
-        if (result.ok) {
-          log("beacon_deposit", { player_id: conn.id, item_kind: msg.itemKind, quantity: msg.quantity });
-          broadcast(connections, { type: "beacon.progress", ...room.getBeaconProgress() });
-        }
-        return;
-      }
-
-      if (msg.type === "beacon.activate") {
-        if (!interactLimiter.allow(conn.id)) {
-          send(socket, {
-            type: "action.result",
-            requestId: msg.requestId,
-            ok: false,
-            reason: "rate_limited",
-          });
-          return;
-        }
-        const result = room.activateBeacon(conn.id, msg.requestId);
-        send(socket, {
-          type: "action.result",
-          requestId: msg.requestId,
-          ok: result.ok,
-          reason: result.reason,
-        });
-        if (result.ok) {
-          log("beacon_activated", { player_id: conn.id });
-          broadcast(connections, { type: "beacon.victory", activatedBy: conn.id });
-        }
-        return;
-      }
-
-      if (msg.type === "zone.enter") {
-        if (!interactLimiter.allow(conn.id)) {
-          send(socket, {
-            type: "action.result",
-            requestId: msg.requestId,
-            ok: false,
-            reason: "rate_limited",
-          });
-          return;
-        }
-        const result = room.enterZone(conn.id, msg.objectId, msg.target, msg.requestId);
-        send(socket, {
-          type: "action.result",
-          requestId: msg.requestId,
-          ok: result.ok,
-          reason: result.reason,
-        });
         return;
       }
     });

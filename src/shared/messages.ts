@@ -45,14 +45,6 @@ export const ChestTransferMessage = z.object({
   direction: z.enum(["deposit", "withdraw"]),
 });
 
-export const FarmActionMessage = z.object({
-  type: z.literal("farm.action"),
-  requestId: z.string().min(1).max(64),
-  buildingId: z.string().min(1).max(64),
-  action: z.enum(["plant", "water", "harvest"]),
-  seedKind: z.string().min(1).max(32).optional(),
-});
-
 export const PlayerRespawnMessage = z.object({
   type: z.literal("player.respawn"),
   requestId: z.string().min(1).max(64),
@@ -64,32 +56,6 @@ export const CombatAttackMessage = z.object({
   targetId: z.string().min(1).max(64),
 });
 
-export const BeaconDepositMessage = z.object({
-  type: z.literal("beacon.deposit"),
-  requestId: z.string().min(1).max(64),
-  itemKind: z.string().min(1).max(32),
-  quantity: z.number().int().positive().max(99),
-});
-
-export const BeaconActivateMessage = z.object({
-  type: z.literal("beacon.activate"),
-  requestId: z.string().min(1).max(64),
-});
-
-/**
- * Requests a zone transition via a specific dungeon_entrance/dungeon_exit
- * object. `target` is the zone the player is trying to enter — the server
- * never infers direction from the object alone, since that keeps the
- * validation symmetric (object exists, player is in range of it, player is
- * in the zone that object's own `zone` sits in, target is the other zone).
- */
-export const ZoneEnterMessage = z.object({
-  type: z.literal("zone.enter"),
-  requestId: z.string().min(1).max(64),
-  objectId: z.string().min(1).max(64),
-  target: z.enum(["overworld", "dungeon"]),
-});
-
 export const ClientMessage = z.discriminatedUnion("type", [
   RoomJoinMessage,
   PlayerInputMessage,
@@ -97,12 +63,8 @@ export const ClientMessage = z.discriminatedUnion("type", [
   CraftRequestMessage,
   BuildingPlaceMessage,
   ChestTransferMessage,
-  FarmActionMessage,
   PlayerRespawnMessage,
   CombatAttackMessage,
-  BeaconDepositMessage,
-  BeaconActivateMessage,
-  ZoneEnterMessage,
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessage>;
@@ -135,7 +97,6 @@ const MapObjectSchema = z.object({
   kind: z.string(),
   x: z.number(),
   y: z.number(),
-  zone: z.enum(["overworld", "dungeon"]).optional(),
   resource: z.object({ kind: z.string(), remaining: z.number(), maxRemaining: z.number() }).optional(),
 });
 
@@ -146,21 +107,12 @@ export const WorldSnapshotMessage = z.object({
   height: z.number(),
   tiles: z.array(z.object({ terrain: z.string() })),
   objects: z.array(MapObjectSchema),
-  dungeon: z.object({
-    width: z.number(),
-    height: z.number(),
-    tiles: z.array(z.object({ terrain: z.string() })),
-    objects: z.array(MapObjectSchema),
-    entryPoint: z.object({ x: z.number(), y: z.number() }),
-    beaconLocation: z.object({ x: z.number(), y: z.number() }),
-  }),
   players: z.array(
     z.object({
       id: z.string(),
       name: z.string(),
       x: z.number(),
       y: z.number(),
-      zone: z.enum(["overworld", "dungeon"]),
       health: z.number(),
       alive: z.boolean(),
       inventory: z.record(z.string(), z.number()),
@@ -178,19 +130,10 @@ export const WorldSnapshotMessage = z.object({
       placedAt: z.number(),
     }),
   ),
-  farmPlots: z.array(
-    z.object({
-      buildingId: z.string(),
-      seedKind: z.string().nullable(),
-      plantedAt: z.number().nullable(),
-      wateredAt: z.number().nullable(),
-    }),
-  ),
   enemies: z.array(
     z.object({
       id: z.string(),
       kind: z.string(),
-      zone: z.enum(["overworld", "dungeon"]),
       x: z.number(),
       y: z.number(),
       health: z.number(),
@@ -198,16 +141,6 @@ export const WorldSnapshotMessage = z.object({
       telegraphing: z.boolean(),
     }),
   ),
-  beaconProgress: z.object({
-    wood: z.number(),
-    stone: z.number(),
-    ancientCore: z.number(),
-    requiredWood: z.number(),
-    requiredStone: z.number(),
-    requiredAncientCore: z.number(),
-    bossDefeated: z.boolean(),
-    activated: z.boolean(),
-  }),
   serverTime: z.number(),
 });
 
@@ -232,15 +165,6 @@ export const ActionResultMessage = z.object({
   recipeId: z.string().optional(),
   buildingId: z.string().optional(),
   chestItems: z.record(z.string(), z.number()).optional(),
-  cropStage: z.string().optional(),
-  farmPlot: z
-    .object({
-      buildingId: z.string(),
-      seedKind: z.string().nullable(),
-      plantedAt: z.number().nullable(),
-      wateredAt: z.number().nullable(),
-    })
-    .optional(),
   health: z.number().optional(),
   enemyHealth: z.number().optional(),
   enemyDied: z.boolean().optional(),
@@ -264,23 +188,6 @@ export const ObjectDepletedMessage = z.object({
   remaining: z.number(),
 });
 
-export const BeaconProgressMessage = z.object({
-  type: z.literal("beacon.progress"),
-  wood: z.number(),
-  stone: z.number(),
-  ancientCore: z.number(),
-  requiredWood: z.number(),
-  requiredStone: z.number(),
-  requiredAncientCore: z.number(),
-  bossDefeated: z.boolean(),
-  activated: z.boolean(),
-});
-
-export const BeaconVictoryMessage = z.object({
-  type: z.literal("beacon.victory"),
-  activatedBy: z.string(),
-});
-
 export const EntitySpawnedMessage = z.object({
   type: z.literal("entity.spawned"),
   building: z.object({
@@ -291,6 +198,12 @@ export const EntitySpawnedMessage = z.object({
     ownerId: z.string(),
     placedAt: z.number(),
   }),
+});
+
+/** Broadcast exactly once, the instant the killing blow leaves every enemy on the map dead — the room's shared win condition. */
+export const GameVictoryMessage = z.object({
+  type: z.literal("game.victory"),
+  lastKillBy: z.string(),
 });
 
 export const ServerErrorMessage = z.object({
@@ -306,7 +219,6 @@ export type ServerMessage =
   | z.infer<typeof ActionResultMessage>
   | z.infer<typeof CombatEventMessage>
   | z.infer<typeof ObjectDepletedMessage>
-  | z.infer<typeof BeaconProgressMessage>
-  | z.infer<typeof BeaconVictoryMessage>
   | z.infer<typeof EntitySpawnedMessage>
+  | z.infer<typeof GameVictoryMessage>
   | z.infer<typeof ServerErrorMessage>;

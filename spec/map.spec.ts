@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateWorldMap } from "../src/shared/map.js";
+import { enemySpawnsFor, generateWorldMap } from "../src/shared/map.js";
 import { SOLID_TERRAIN } from "../src/shared/types.js";
 
 describe("generateWorldMap", () => {
@@ -9,7 +9,6 @@ describe("generateWorldMap", () => {
     expect(a.tiles).toEqual(b.tiles);
     expect(a.objects).toEqual(b.objects);
     expect(a.campsite).toEqual(b.campsite);
-    expect(a.dungeonEntrance).toEqual(b.dungeonEntrance);
   });
 
   it("produces a different map for a different seed", () => {
@@ -30,19 +29,6 @@ describe("generateWorldMap", () => {
     const tile = map.tiles[map.campsite.y * map.width + map.campsite.x];
     expect(tile).toBeDefined();
     expect(SOLID_TERRAIN.has(tile!.terrain)).toBe(false);
-  });
-
-  it("places the dungeon entrance within bounds and away from the campsite", () => {
-    const map = generateWorldMap("seed-dungeon");
-    expect(map.dungeonEntrance.x).toBeGreaterThanOrEqual(0);
-    expect(map.dungeonEntrance.x).toBeLessThan(map.width);
-    expect(map.dungeonEntrance.y).toBeGreaterThanOrEqual(0);
-    expect(map.dungeonEntrance.y).toBeLessThan(map.height);
-    const dist = Math.hypot(
-      map.dungeonEntrance.x - map.campsite.x,
-      map.dungeonEntrance.y - map.campsite.y,
-    );
-    expect(dist).toBeGreaterThan(10);
   });
 
   it("gives every resource-bearing object a positive max yield", () => {

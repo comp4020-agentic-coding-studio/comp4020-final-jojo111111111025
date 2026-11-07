@@ -80,23 +80,6 @@
         font-size: 13px;
         display: none;
       }
-      #farm-prompt {
-        position: absolute;
-        bottom: calc(44px + var(--bottom-safe));
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0, 0, 0, 0.6);
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-size: 13px;
-        display: none;
-        gap: 6px;
-        align-items: center;
-      }
-      #farm-prompt button {
-        padding: 3px 8px;
-        font-size: 12px;
-      }
       #craft-panel {
         position: absolute;
         bottom: calc(8px + var(--bottom-safe));
@@ -376,17 +359,6 @@
         min-height: 16px;
         opacity: 0.9;
       }
-      #zone-prompt {
-        position: absolute;
-        bottom: calc(80px + var(--bottom-safe));
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0, 0, 0, 0.6);
-        padding: 6px 12px;
-        border-radius: 6px;
-        font-size: 13px;
-        display: none;
-      }
       #action-feedback {
         position: absolute;
         top: 84px;
@@ -428,69 +400,6 @@
           white-space: normal;
           max-width: calc(100vw - 32px);
         }
-      }
-      #beacon-panel {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: rgba(10, 10, 10, 0.92);
-        border-radius: 8px;
-        padding: 14px;
-        width: 280px;
-        max-width: calc(100vw - 24px);
-        box-sizing: border-box;
-        font-size: 13px;
-        display: none;
-      }
-      #beacon-panel h2 {
-        margin: 0 0 6px;
-        font-size: 15px;
-      }
-      #beacon-panel .req-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 3px 0;
-      }
-      #beacon-panel .req-row.met {
-        color: #6fd66f;
-      }
-      #beacon-panel button {
-        margin-top: 10px;
-        width: 100%;
-        padding: 8px;
-        border: none;
-        border-radius: 6px;
-        background: #6b4ab0;
-        color: #fff;
-        font-size: 13px;
-        cursor: pointer;
-      }
-      #beacon-panel button:disabled {
-        background: #444;
-        color: #888;
-        cursor: not-allowed;
-      }
-      #beacon-deposit-rows {
-        margin-top: 8px;
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        padding-top: 8px;
-      }
-      #beacon-deposit-rows .deposit-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 3px 0;
-      }
-      #beacon-deposit-rows button {
-        margin: 0;
-        width: auto;
-        padding: 3px 8px;
-        font-size: 11px;
-      }
-      #beacon-close {
-        margin-top: 10px;
-        background: #444 !important;
       }
       /* Touch controls: hidden by default, shown only for coarse-pointer
          (touch) devices via the (pointer: coarse) media query below, so a
@@ -605,17 +514,16 @@
       <div id="join-box">
         <h1>Last Shelter</h1>
         <p class="goal">
-          One to four survivors, one shared camp. Gather, craft, and farm by
-          day; fend off wanderers at night. Defeat the dungeon boss, then
-          carry its ancient core back to light the beacon together — that's
-          victory.
+          One to four survivors, one shared camp. Gather wood, stone, and
+          berries; craft tools and weapons. Every enemy on the map — wanderers,
+          guardians, and the boss — hunts you on sight. Clear them all,
+          together, to win.
         </p>
         <div class="controls-summary">
           <div class="row"><span>Move</span><kbd>WASD</kbd> / <kbd>Arrow keys</kbd></div>
           <div class="row"><span>Gather / interact</span><kbd>E</kbd></div>
           <div class="row"><span>Attack nearest enemy</span><kbd>Space</kbd></div>
           <div class="row"><span>Open nearest chest</span><kbd>C</kbd></div>
-          <div class="row"><span>Open beacon (in dungeon)</span><kbd>B</kbd></div>
         </div>
         <label for="join-name">Name</label>
         <input id="join-name" type="text" maxlength="24" placeholder="Your name" />
@@ -632,12 +540,10 @@
         <span>🪵 <span id="wood">0</span></span>
         <span>🪨 <span id="stone">0</span></span>
         <span>🍓 <span id="berries">0</span></span>
-        <span>🌱 <span id="seed_berry">0</span></span>
         <span>🪓 <span id="axe">0</span></span>
         <span>⛏️ <span id="pickaxe">0</span></span>
         <span>🗡️ <span id="sword">0</span></span>
         <span>🩹 <span id="bandage">0</span></span>
-        <span>✨ <span id="ancient_core">0</span></span>
       </div>
       <div id="status">connecting…</div>
       <div id="night-indicator">🌙 night</div>
@@ -647,11 +553,9 @@
         <div><kbd>WASD</kbd>/<kbd>arrows</kbd> move</div>
         <div><kbd>E</kbd> gather / interact</div>
         <div><kbd>Space</kbd> attack</div>
-        <div><kbd>C</kbd> chest · <kbd>B</kbd> beacon</div>
+        <div><kbd>C</kbd> chest</div>
       </div>
       <div id="prompt">press E to gather</div>
-      <div id="zone-prompt"></div>
-      <div id="farm-prompt"></div>
       <div id="combat-feedback"></div>
       <div id="action-feedback"></div>
       <div id="health-bar">
@@ -672,20 +576,12 @@
         <div id="chest-rows"></div>
         <button id="chest-close">Close (C)</button>
       </div>
-      <div id="beacon-panel">
-        <h2>Ancient Beacon</h2>
-        <div id="beacon-requirements"></div>
-        <div id="beacon-deposit-rows"></div>
-        <button id="beacon-activate">Activate Beacon</button>
-        <button id="beacon-close">Close (B)</button>
-      </div>
       <div id="touch-controls">
         <div id="touch-joystick"><div id="touch-joystick-knob"></div></div>
         <div id="touch-actions">
           <button id="touch-interact" aria-label="Gather / interact">E</button>
           <button id="touch-attack" aria-label="Attack">⚔</button>
           <button id="touch-chest" aria-label="Open chest">🧰</button>
-          <button id="touch-beacon" aria-label="Open beacon">🔥</button>
         </div>
       </div>
     </div>
@@ -695,7 +591,7 @@
       <button id="respawn-button">Respawn</button>
     </div>
     <div id="victory-screen">
-      <h1>🏮 The Beacon is Lit 🏮</h1>
+      <h1>⚔️ Every Enemy Defeated ⚔️</h1>
       <div id="victory-detail"></div>
     </div>
     <script type="module" src="/main.js"></script>

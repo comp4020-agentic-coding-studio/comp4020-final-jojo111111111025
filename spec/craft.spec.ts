@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import { ITEM_STACK_LIMIT } from "../src/shared/constants.js";
 import type { MapObject, WorldMap } from "../src/shared/types.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
 
 function makeNode(id: string, kind: "wood" | "stone" | "berries", remaining: number): MapObject {
   const objectKind = kind === "wood" ? "tree" : kind === "stone" ? "rock" : "bush";
@@ -22,13 +21,12 @@ function makeTestMap(): WorldMap {
     objects: [
       makeNode("wood-node", "wood", ITEM_STACK_LIMIT + 10),
       makeNode("stone-node", "stone", ITEM_STACK_LIMIT + 10),
-      makeNode("berries-node", "berries", ITEM_STACK_LIMIT + 10),
+      // Bandage costs 3 berries each; filling the bandage stack to
+      // ITEM_STACK_LIMIT needs up to ITEM_STACK_LIMIT*3 berries plus a few more.
+      makeNode("berries-node", "berries", ITEM_STACK_LIMIT * 3 + 10),
     ],
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 1 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 4, y: 4 },
-    dungeon: emptyDungeon(),
   };
 }
 
@@ -107,24 +105,24 @@ describe("Room.craft", () => {
     const room = new Room(makeTestMap());
     room.addPlayer("p1", "Alice");
 
-    // Craft seed_berry repeatedly (each craft: 1 berry -> 2 seeds), re-gathering
-    // one berry before each attempt, until the seed_berry stack can no longer
-    // fit another craft's output (qty 2). A monotonic counter keeps every
-    // requestId unique so a transient failure can't repeat a stale dedupe hit.
+    // Craft bandage repeatedly (each craft: 3 berries -> 1 bandage), re-gathering
+    // berries before each attempt, until the bandage stack can no longer fit
+    // another craft's output. A monotonic counter keeps every requestId unique
+    // so a transient failure can't repeat a stale dedupe hit.
     let attempt = 0;
-    while (room.getPlayer("p1")!.inventory.seed_berry <= ITEM_STACK_LIMIT - 2) {
-      grantResource(room, "p1", "berries", 1);
-      room.craft("p1", "seed_berry", `fill-${attempt++}`);
+    while (room.getPlayer("p1")!.inventory.bandage < ITEM_STACK_LIMIT) {
+      grantResource(room, "p1", "berries", 3);
+      room.craft("p1", "bandage", `fill-${attempt++}`);
     }
-    grantResource(room, "p1", "berries", 1);
+    grantResource(room, "p1", "berries", 3);
     const berriesBefore = room.getPlayer("p1")!.inventory.berries;
-    const seedsBefore = room.getPlayer("p1")!.inventory.seed_berry;
-    expect(seedsBefore).toBeGreaterThan(ITEM_STACK_LIMIT - 2);
+    const bandagesBefore = room.getPlayer("p1")!.inventory.bandage;
+    expect(bandagesBefore).toBe(ITEM_STACK_LIMIT);
 
-    const result = room.craft("p1", "seed_berry", "req-overflow");
+    const result = room.craft("p1", "bandage", "req-overflow");
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("inventory_full");
     expect(room.getPlayer("p1")!.inventory.berries).toBe(berriesBefore);
-    expect(room.getPlayer("p1")!.inventory.seed_berry).toBe(seedsBefore);
+    expect(room.getPlayer("p1")!.inventory.bandage).toBe(bandagesBefore);
   });
 });

@@ -8,7 +8,6 @@ import { loadPlayerInventory, persistPlayerInventory } from "../src/server/world
 import { touchPlayerRecord } from "../src/server/identity.js";
 import { Room } from "../src/server/room.js";
 import type { MapObject, WorldMap } from "../src/shared/types.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
 
 let dir: string;
 let dbPath: string;
@@ -39,9 +38,6 @@ function makeTestMap(): WorldMap {
     objects: [makeNode("wood-node", "wood", 100, 0, 1)],
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 1 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 9, y: 9 },
-    dungeon: emptyDungeon(),
   };
 }
 

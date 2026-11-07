@@ -1,22 +1,11 @@
 import type { ItemKind } from "./types.js";
 
-export type RecipeId =
-  | "axe"
-  | "pickaxe"
-  | "sword"
-  | "bandage"
-  | "seed_berry"
-  | "workbench"
-  | "chest"
-  | "wall"
-  | "floor"
-  | "farm_plot"
-  | "campfire";
+export type RecipeId = "axe" | "pickaxe" | "sword" | "bandage" | "workbench" | "chest" | "wall" | "floor" | "campfire";
 
 /** What a recipe produces when crafted: either an inventory item, or a placeable building. */
 export type RecipeOutput =
   | { type: "item"; kind: ItemKind; qty: number }
-  | { type: "building"; kind: "wall" | "floor" | "campfire" | "workbench" | "chest" | "farm_plot" };
+  | { type: "building"; kind: "wall" | "floor" | "campfire" | "workbench" | "chest" };
 
 export interface Recipe {
   id: RecipeId;
@@ -55,12 +44,6 @@ export const RECIPES: Record<RecipeId, Recipe> = {
     inputs: { berries: 3 },
     output: { type: "item", kind: "bandage", qty: 1 },
   },
-  seed_berry: {
-    id: "seed_berry",
-    name: "Berry Seeds",
-    inputs: { berries: 1 },
-    output: { type: "item", kind: "seed_berry", qty: 2 },
-  },
   workbench: {
     id: "workbench",
     name: "Workbench",
@@ -84,12 +67,6 @@ export const RECIPES: Record<RecipeId, Recipe> = {
     name: "Floor",
     inputs: { wood: 1 },
     output: { type: "building", kind: "floor" },
-  },
-  farm_plot: {
-    id: "farm_plot",
-    name: "Farm Plot",
-    inputs: { wood: 2 },
-    output: { type: "building", kind: "farm_plot" },
   },
   campfire: {
     id: "campfire",

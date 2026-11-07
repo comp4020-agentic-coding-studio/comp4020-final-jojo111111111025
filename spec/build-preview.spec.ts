@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isBuildCellFree } from "../src/client/net.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
-import type { Building, DungeonMap, MapObject, MapTile, WorldMap } from "../src/shared/types.js";
+import type { Building, MapObject, MapTile, WorldMap } from "../src/shared/types.js";
 
 /**
  * isBuildCellFree is the pure logic behind the build-target preview ring
@@ -14,7 +13,7 @@ import type { Building, DungeonMap, MapObject, MapTile, WorldMap } from "../src/
  * top-level DOM code) for the same reason findGainedItem/
  * applyObjectDepleted were — testable without a browser/jsdom.
  */
-function makeWorld(objects: MapObject[] = [], waterAt: Array<[number, number]> = []): WorldMap & { dungeon: DungeonMap } {
+function makeWorld(objects: MapObject[] = [], waterAt: Array<[number, number]> = []): WorldMap {
   const width = 10;
   const height = 10;
   const tiles: MapTile[] = Array.from({ length: width * height }, () => ({ terrain: "grass" }));
@@ -29,9 +28,6 @@ function makeWorld(objects: MapObject[] = [], waterAt: Array<[number, number]> =
     objects,
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 1 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 9, y: 9 },
-    dungeon: emptyDungeon(),
   };
 }
 

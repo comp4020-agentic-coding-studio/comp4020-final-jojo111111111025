@@ -5,7 +5,6 @@ import { loadPlayerHealth, persistPlayerHealth } from "../src/server/world.js";
 import { MAX_HEALTH } from "../src/shared/constants.js";
 import type { WorldMap } from "../src/shared/types.js";
 import { TestClient, fetchIdentityCookie, startTestServer, type TestServer } from "./helpers/server-harness.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
 
 /** Mints a valid signed identity cookie for a specific id, for tests that need to control the identity ahead of the first join. */
 function mintCookieForId(server: TestServer, id: string): string {
@@ -27,9 +26,6 @@ function makeTestMap(): WorldMap {
     ],
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 1 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 9, y: 9 },
-    dungeon: emptyDungeon(),
   };
 }
 
@@ -89,7 +85,6 @@ describe("Room player health and respawn", () => {
     const respawned = room.getPlayer("p1")!;
     expect(respawned.alive).toBe(true);
     expect(respawned.health).toBe(MAX_HEALTH);
-    expect(respawned.zone).toBe("overworld");
     expect(respawned.inventory.wood).toBe(0); // untouched, not reset to some other value — still whatever it was
   });
 
@@ -111,7 +106,7 @@ describe("Room player health and respawn", () => {
     expect(room2.getPlayer("p2")!.inventory.wood).toBe(1);
   });
 
-  it("a dead player's interact/craft/build/chest/farm actions are all rejected with reason 'dead'", () => {
+  it("a dead player's interact/craft/build/chest actions are all rejected with reason 'dead'", () => {
     const room = new Room(makeTestMap());
     room.addPlayer("p1", "Alice", undefined, 0); // dead on arrival
 
@@ -119,7 +114,6 @@ describe("Room player health and respawn", () => {
     expect(room.craft("p1", "axe", "r2").reason).toBe("dead");
     expect(room.build("p1", "wall", 2, 2, "r3").reason).toBe("dead");
     expect(room.chestTransfer("p1", "does-not-exist", "wood", 1, "deposit", "r4").reason).toBe("dead");
-    expect(room.farmAction("p1", "does-not-exist", "water", undefined, "r5").reason).toBe("dead");
   });
 
   it("a dead player does not move even with input set", () => {

@@ -1,16 +1,5 @@
 import { MAP_HEIGHT, MAP_WIDTH } from "./constants.js";
-import type {
-  DungeonMap,
-  EnemySpawn,
-  MapObject,
-  MapTile,
-  ResourceKind,
-  TerrainKind,
-  WorldMap,
-} from "./types.js";
-
-const DUNGEON_WIDTH = 16;
-const DUNGEON_HEIGHT = 16;
+import type { EnemySpawn, MapObject, MapTile, ResourceKind, TerrainKind, WorldMap } from "./types.js";
 
 /** Deterministic string -> 32-bit seed, so the same seed string always yields the same map. */
 function hashSeed(seed: string): number {
@@ -120,24 +109,11 @@ export function generateWorldMap(seed: string, width = MAP_WIDTH, height = MAP_H
   clearPatch(tiles, width, height, campsite.x, campsite.y, 3);
   const spawnPoint = { x: campsite.x, y: campsite.y + 1 };
 
-  // Farm area: a flat grass rectangle a few tiles east of the campsite.
-  const farmArea = { x: campsite.x + 5, y: campsite.y - 2, width: 5, height: 4 };
-  for (let y = farmArea.y; y < farmArea.y + farmArea.height; y++) {
-    for (let x = farmArea.x; x < farmArea.x + farmArea.width; x++) {
-      if (inBounds(x, y, width, height)) tiles[y * width + x] = { terrain: "grass" };
-    }
-  }
-
-  // Dungeon entrance: pick a rocky tile far from the campsite, deterministically.
-  const dungeonEntrance = findDungeonEntrance(tiles, width, height, campsite);
-
   const objects: MapObject[] = [];
   let objectSeq = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (nearCampsite(x, y, campsite, 4)) continue;
-      if (inFarmArea(x, y, farmArea)) continue;
-      if (x === dungeonEntrance.x && y === dungeonEntrance.y) continue;
 
       const terrain = tiles[y * width + x]!.terrain;
       const roll = rand();
@@ -156,52 +132,9 @@ export function generateWorldMap(seed: string, width = MAP_WIDTH, height = MAP_H
     kind: "campfire",
     x: campsite.x,
     y: campsite.y,
-    zone: "overworld",
-  });
-  objects.push({
-    id: `object-${objectSeq++}`,
-    kind: "dungeon_entrance",
-    x: dungeonEntrance.x,
-    y: dungeonEntrance.y,
-    zone: "overworld",
   });
 
-  const dungeon = generateDungeon();
-
-  return { seed, width, height, tiles, objects, campsite, spawnPoint, farmArea, dungeonEntrance, dungeon };
-}
-
-/**
- * The dungeon's own small, disjoint coordinate space (see DungeonMap's
- * doc-comment). A simple open stone chamber — there's no puzzle/maze content
- * planned for this phase, just a bounded arena for the guardian enemies and
- * the boss guarding the beacon. Deterministic from the world seed, same as
- * the overworld.
- */
-function generateDungeon(): DungeonMap {
-  const width = DUNGEON_WIDTH;
-  const height = DUNGEON_HEIGHT;
-  const tiles: MapTile[] = new Array(width * height);
-  for (let i = 0; i < tiles.length; i++) tiles[i] = { terrain: "dungeon_wall" };
-
-  // Clear a walkable floor for the whole chamber except a 1-tile wall
-  // border, so the dungeon has solid walls on every edge (dungeon_wall is in
-  // SOLID_TERRAIN; see types.ts).
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      tiles[y * width + x] = { terrain: "dungeon_floor" };
-    }
-  }
-
-  const entryPoint = { x: 1, y: Math.floor(height / 2) };
-  const beaconLocation = { x: width - 2, y: Math.floor(height / 2) };
-
-  const objects: MapObject[] = [
-    { id: "dungeon-exit", kind: "dungeon_exit", x: entryPoint.x, y: entryPoint.y, zone: "dungeon" },
-    { id: "dungeon-beacon", kind: "ancient_beacon", x: beaconLocation.x, y: beaconLocation.y, zone: "dungeon" },
-  ];
-
-  return { width, height, tiles, objects, entryPoint, beaconLocation };
+  return { seed, width, height, tiles, objects, campsite, spawnPoint };
 }
 
 function makeResourceObject(
@@ -237,52 +170,19 @@ function nearCampsite(x: number, y: number, campsite: { x: number; y: number }, 
   return Math.abs(x - campsite.x) <= radius && Math.abs(y - campsite.y) <= radius;
 }
 
-function inFarmArea(x: number, y: number, farmArea: { x: number; y: number; width: number; height: number }): boolean {
-  return (
-    x >= farmArea.x &&
-    x < farmArea.x + farmArea.width &&
-    y >= farmArea.y &&
-    y < farmArea.y + farmArea.height
-  );
-}
-
-function findDungeonEntrance(
-  tiles: MapTile[],
-  width: number,
-  height: number,
-  campsite: { x: number; y: number },
-): { x: number; y: number } {
-  let best: { x: number; y: number } | null = null;
-  let bestDist = -1;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (tiles[y * width + x]!.terrain !== "rock") continue;
-      const dist = Math.hypot(x - campsite.x, y - campsite.y);
-      if (dist > bestDist) {
-        bestDist = dist;
-        best = { x, y };
-      }
-    }
-  }
-  // Fallback: corner of the map, deterministic, in case no rock tile generated.
-  return best ?? { x: width - 2, y: height - 2 };
-}
-
 /**
- * A deterministic initial enemy roster for a generated map: a handful of
- * overworld wanderers (night-only aggro, near the campsite perimeter so
- * they're reachable early) and a few dungeon guardians plus the boss guarding
- * the beacon. Pure function of the map, so production (`world.ts`) and the
- * integration test harness build the exact same roster from the exact same
- * source, the same drift-prevention pattern `loadInitialRoomState` already
- * uses for buildings/chests/farm plots.
+ * A deterministic initial enemy roster for a generated map: wanderers in a
+ * close ring around the campsite, guardians further out, and the boss
+ * furthest of all — every enemy now lives on the overworld (there's no
+ * dungeon any more), with difficulty increasing by distance from camp
+ * instead of by zone. Pure function of the map, so production (`world.ts`)
+ * and the integration test harness build the exact same roster from the
+ * exact same source, the same drift-prevention pattern `loadInitialRoomState`
+ * already uses for buildings/chests.
  */
 export function enemySpawnsFor(map: WorldMap): EnemySpawn[] {
   const spawns: EnemySpawn[] = [];
 
-  // Overworld wanderers: a fixed ring of points around the campsite, far
-  // enough out to be outside the campfire's safe radius but still inside the
-  // map bounds on any seed/size.
   const wandererOffsets: Array<[number, number]> = [
     [10, 0],
     [-10, 0],
@@ -292,15 +192,22 @@ export function enemySpawnsFor(map: WorldMap): EnemySpawn[] {
   for (const [dx, dy] of wandererOffsets) {
     const x = clampInt(map.campsite.x + dx, 1, map.width - 2);
     const y = clampInt(map.campsite.y + dy, 1, map.height - 2);
-    spawns.push({ kind: "wanderer", zone: "overworld", x, y });
+    spawns.push({ kind: "wanderer", x, y });
   }
 
-  // Dungeon guardians flank the entry corridor; the boss sits at the beacon.
-  const dungeon = map.dungeon;
-  const midY = Math.floor(dungeon.height / 2);
-  spawns.push({ kind: "guardian", zone: "dungeon", x: Math.floor(dungeon.width / 2), y: midY - 2 });
-  spawns.push({ kind: "guardian", zone: "dungeon", x: Math.floor(dungeon.width / 2), y: midY + 2 });
-  spawns.push({ kind: "boss", zone: "dungeon", x: dungeon.beaconLocation.x - 1, y: dungeon.beaconLocation.y });
+  const guardianOffsets: Array<[number, number]> = [
+    [18, 18],
+    [-18, -18],
+  ];
+  for (const [dx, dy] of guardianOffsets) {
+    const x = clampInt(map.campsite.x + dx, 1, map.width - 2);
+    const y = clampInt(map.campsite.y + dy, 1, map.height - 2);
+    spawns.push({ kind: "guardian", x, y });
+  }
+
+  const bossX = clampInt(map.campsite.x + 28, 1, map.width - 2);
+  const bossY = clampInt(map.campsite.y + 28, 1, map.height - 2);
+  spawns.push({ kind: "boss", x: bossX, y: bossY });
 
   return spawns;
 }

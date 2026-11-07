@@ -45,7 +45,7 @@ export async function startTestServer(options: {
   reconnectGraceMs?: number;
   dbDir?: string;
   now?: () => number;
-  /** Overrides the generated world map (e.g. a compact test map with a nearby dungeon entrance/beacon) instead of the real seeded one — the dev map's dungeon/beacon sit dozens of tiles from spawn, too far to walk in a test's timeout. */
+  /** Overrides the generated world map (e.g. a compact test map) instead of the real seeded one — the dev map is far too large to walk across in a test's timeout. */
   map?: WorldMap;
   /** Overrides the deterministic enemy roster derived from the map, so tests can place a low-health enemy within immediate attack range. */
   enemySpawns?: EnemySpawn[];
@@ -66,13 +66,9 @@ export async function startTestServer(options: {
     createRoomPersistence(db),
     initialState.buildings,
     initialState.chestItems,
-    initialState.farmPlots,
     options.now ?? Date.now,
     worldCreatedAt,
     options.enemySpawns ?? initialState.enemySpawns,
-    initialState.bossAlreadyDefeated,
-    initialState.beaconMaterials,
-    initialState.beaconActivated,
   );
 
   const server: Server = createServer((req, res) => {

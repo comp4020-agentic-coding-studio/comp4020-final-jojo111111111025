@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import type { WorldMap } from "../src/shared/types.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
 
 /**
  * Ticks the room, steering playerId toward (targetX, targetY), stopping once
@@ -50,9 +49,6 @@ function makeTestMap(): WorldMap {
     ],
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 2 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 9, y: 9 },
-    dungeon: emptyDungeon(),
   };
 }
 

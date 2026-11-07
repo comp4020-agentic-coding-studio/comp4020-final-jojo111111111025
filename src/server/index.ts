@@ -45,13 +45,9 @@ const room = new Room(
   createRoomPersistence(db),
   initialState.buildings,
   initialState.chestItems,
-  initialState.farmPlots,
   Date.now,
   worldCreatedAt,
   initialState.enemySpawns,
-  initialState.bossAlreadyDefeated,
-  initialState.beaconMaterials,
-  initialState.beaconActivated,
 );
 
 const server = createServer((req, res) => {

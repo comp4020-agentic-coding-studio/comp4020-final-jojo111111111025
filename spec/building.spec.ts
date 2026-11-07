@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import type { MapObject, WorldMap } from "../src/shared/types.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
 
 function makeNode(id: string, kind: "wood" | "stone", remaining: number, x: number, y: number): MapObject {
   const objectKind = kind === "wood" ? "tree" : "rock";
@@ -25,9 +24,6 @@ function makeTestMap(extraObjects: MapObject[] = []): WorldMap {
     ],
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 1 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 9, y: 9 },
-    dungeon: emptyDungeon(),
   };
 }
 

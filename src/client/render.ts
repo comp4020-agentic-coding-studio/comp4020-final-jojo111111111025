@@ -1,6 +1,7 @@
 import { TILE_SIZE } from "../shared/constants.js";
 import type { Building, MapObject, MapTile } from "../shared/types.js";
 import {
+  BUILDING_SPRITES,
   ENEMY_SPRITES,
   getImage,
   OBJECT_SPRITES,
@@ -20,21 +21,17 @@ const TERRAIN_COLORS: Record<string, string> = {
   forest: "#2e5a2a",
   water: "#2a5a8c",
   rock: "#6b6b6b",
-  dungeon_wall: "#4a4654",
-  dungeon_floor: "#c9c5cf",
 };
 
-/** Fallback for an ObjectKind with no sprite (tree/rock/bush — see
- * OBJECT_SPRITES's doc-comment for why) and for any object drawn before its
- * sheet has finished loading. */
+/** Fallback for an ObjectKind with no sprite (tree — see OBJECT_SPRITES's
+ * doc-comment for why) and for any object drawn before its sheet has
+ * finished loading (every other kind here, including rock, has a sprite —
+ * this fallback only fires during that brief image-load window for them). */
 const OBJECT_COLORS: Record<string, string> = {
   tree: "#1f3d1a",
   rock: "#8a8a8a",
   bush: "#7a2e3a",
   campfire: "#e08a2a",
-  dungeon_entrance: "#3a1a4a",
-  dungeon_exit: "#3a1a4a",
-  ancient_beacon: "#c9a7ff",
 };
 
 const BUILDING_COLORS: Record<string, string> = {
@@ -43,7 +40,6 @@ const BUILDING_COLORS: Record<string, string> = {
   campfire: "#e08a2a",
   workbench: "#a87c4a",
   chest: "#c2a35a",
-  farm_plot: "#6b4a2a",
 };
 
 const ENEMY_COLORS: Record<string, string> = {
@@ -415,11 +411,28 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, enemy: RenderEnemy, ori
   ctx.fillRect(px - barWidth / 2, barY, barWidth * pct, 4);
 }
 
+/**
+ * Draws one placed building. Tries BUILDING_SPRITES first (campfire reuses
+ * OBJECT_SPRITES.campfire — a placed campfire and the world-gen campfire
+ * object are the same flame art), same sprite-then-fallback pattern
+ * drawTile/drawObject use, with the same centring/bottom-anchor formulas
+ * for a sprite that isn't exactly TILE_SIZE in one or both dimensions.
+ */
 function drawBuilding(ctx: CanvasRenderingContext2D, building: Building, originX: number, originY: number): void {
-  ctx.fillStyle = BUILDING_COLORS[building.kind] ?? "#ccc";
   const x = Math.round(building.x * TILE_SIZE - originX);
   const y = Math.round(building.y * TILE_SIZE - originY);
-  if (building.kind === "floor" || building.kind === "farm_plot") {
+
+  const rect = building.kind === "campfire" ? OBJECT_SPRITES.campfire : BUILDING_SPRITES[building.kind];
+  const img = rect && getImage(rect);
+  if (rect && img) {
+    const destX = x - (rect.w - TILE_SIZE) / 2;
+    const destY = y - (rect.h - TILE_SIZE);
+    ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, destX, destY, rect.w, rect.h);
+    return;
+  }
+
+  ctx.fillStyle = BUILDING_COLORS[building.kind] ?? "#ccc";
+  if (building.kind === "floor") {
     ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
   } else {
     ctx.fillRect(x + 1, y + 1, TILE_SIZE - 2, TILE_SIZE - 2);

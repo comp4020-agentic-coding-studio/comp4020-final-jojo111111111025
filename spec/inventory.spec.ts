@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
 import { ITEM_STACK_LIMIT } from "../src/shared/constants.js";
 import type { MapObject, WorldMap } from "../src/shared/types.js";
-import { emptyDungeon } from "./helpers/test-fixtures.js";
 
 function makeNode(id: string, remaining: number): MapObject {
   return { id, kind: "bush", x: 1, y: 1, resource: { kind: "berries", remaining, maxRemaining: remaining } };
@@ -20,9 +19,6 @@ function makeTestMap(objects: MapObject[]): WorldMap {
     objects,
     campsite: { x: 1, y: 1 },
     spawnPoint: { x: 1, y: 1 },
-    farmArea: { x: 0, y: 0, width: 0, height: 0 },
-    dungeonEntrance: { x: 4, y: 4 },
-    dungeon: emptyDungeon(),
   };
 }
 
@@ -33,7 +29,6 @@ describe("Room inventory stacking (via gather)", () => {
     const inv = room.getPlayer("p1")!.inventory;
     expect(inv.wood).toBe(0);
     expect(inv.axe).toBe(0);
-    expect(inv.seed_berry).toBe(0);
   });
 
   it("grants the full gathered amount when there is room in the stack", () => {

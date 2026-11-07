@@ -1370,3 +1370,285 @@ mutation-and-revert discipline every prior stage's new tests have used.
 **Not yet verified:** the same browser limitation as every prior stage —
 the ring's actual on-screen colour, position, and responsiveness to
 turning/moving were not observed in a running client.
+
+### Stage 12 — a large gameplay simplification: kill everything to win
+
+Requested: cut scope down to "kill every enemy on the map to win"; remove
+farming and the dungeon/beacon entirely (berry-bush *gathering* stays —
+only the farm *plot* mechanic goes); keep every building except
+`farm_plot`; keep all four craftable items (axe, pickaxe, sword, bandage);
+move guardian and boss onto the overworld as farther-out, harder enemy
+tiers instead of dungeon-exclusive; and lower wanderer speed since it no
+longer only aggros at night.
+
+This touches win condition, map generation, the dungeon's entire separate
+coordinate space, and several systems added across Stages 1–11, so before
+touching any code the scope was narrowed via a sequence of single-decision
+questions rather than one large confirmation, surfacing two internal
+conflicts the request didn't address on its own and letting the user
+resolve each explicitly:
+
+- **Enemy respawn vs. a finite kill-everything win condition.** The
+  existing `ENEMY_RESPAWN_MS` mechanic (a dead enemy reappears after a
+  timer) makes "kill every enemy" permanently unreachable — there is
+  always one more about to respawn. Resolved: respawn is cancelled
+  entirely; a killed enemy is gone for the rest of that world's lifetime
+  (until a server restart regenerates the roster from the map seed — see
+  below).
+- **Night-only wanderer aggro vs. "kill everything."** Stage 10 added
+  extra night-only wanderer spawns and night-only aggro/speed/leash
+  values specifically to make night *harder*. A finite, killable roster
+  and a feature that spawns *more* enemies at night are contradictory.
+  Resolved: Stage 10's night-wanderer-spawn feature is cancelled outright
+  (not merely adjusted), and every enemy now aggros unconditionally
+  regardless of time of day — day/night keeps its purely visual/ambience
+  role (the sky tint, the BGM is unaffected either way since there's only
+  one zone now) but no longer gates combat behaviour at all.
+
+**What changed, by layer:**
+
+- **`src/shared/types.ts`**: `TerrainKind` dropped the two dungeon-only
+  variants; `ItemKind`/`ObjectKind`/`BuildingKind` dropped `seed_berry`/
+  `ancient_core`, `dungeon_entrance`/`dungeon_exit`/`ancient_beacon`, and
+  `farm_plot` respectively. `Zone` and `DungeonMap` are deleted entirely —
+  there is exactly one coordinate space now, not two. `EnemyState` dropped
+  `zone`, `respawnAt`, `nightOnly`, and `contributors` (the last of these
+  was boss-loot-contributor tracking, meaningless without the beacon
+  reward it fed). `EnemyState`'s doc-comment states directly why no new
+  persistence was added for "how many enemies are left": enemies were
+  already documented as in-memory-only, transient simulation state, same
+  category as player position — never persisted per-tick, not even the
+  boss — so a server restart resetting kill progress is consistent with
+  that existing, accepted design, not a new gap introduced by this stage.
+- **`src/shared/map.ts`**: `generateDungeon()`, `findDungeonEntrance()`,
+  and the farm-area carve-out are deleted; `generateWorldMap()` no longer
+  returns `farmArea`/`dungeonEntrance`/`dungeon`. `enemySpawnsFor(map)` is
+  rewritten so guardian and boss are overworld spawns, placed farther from
+  the campsite than wanderers (wanderers at a fixed ring of offsets around
+  the spawn, guardians further out, the boss furthest), preserving a
+  difficulty-by-distance curve where the old build had difficulty-by-zone.
+- **`src/server/room.ts`**: `tickEnemy()` is simplified — no aggro-range
+  check, no day/night branch, no wanderer leash (see Stage 12's follow-up
+  change below for why the aggro-range/leash removal happened in two
+  steps). New method `allEnemiesDefeated()`: `false` for an empty roster
+  (a bare test fixture is never auto-"won"), otherwise true iff every
+  enemy's `alive` is false. `ActionResult` gained `allEnemiesDefeated?:
+  boolean`, set only on the exact attack result that lands the kill
+  completing the roster — never on a non-killing hit, never recomputed
+  redundantly on every subsequent action.
+- **`src/server/net.ts`**: `combat.attack`'s handler checks
+  `result.allEnemiesDefeated` and broadcasts a new `game.victory` message
+  to every connected client exactly once when it's true.
+- **`src/shared/messages.ts`**: new `GameVictoryMessage` (`{ type:
+  "game.victory", lastKillBy: string }`) replaces the deleted
+  `BeaconProgressMessage`/`BeaconVictoryMessage`. Every farm/beacon/zone
+  client message type is deleted from the `ClientMessage` union.
+- **Database**: `farm_plots`, `world_progress`, and `pending_rewards`
+  tables are dropped from `migrate()` — nothing in the new design needs
+  farm-plot state, boss-defeated-once tracking, or a reward queue.
+- **Client**: `src/client/main.ts` loses the beacon panel, zone-transition
+  prompt, and farm-plot UI entirely; a new `onGameVictory` handler shows a
+  victory screen once (`victoryShown` latches so a second broadcast, if
+  one somehow arrived, can't reopen it). `public/index.html`'s intro copy
+  and victory screen headline were rewritten for the new goal.
+
+**Testing.** Deleted outright (tested entirely-removed systems):
+`spec/farm.spec.ts`, `spec/beacon.spec.ts`, `spec/zone.spec.ts`,
+`spec/dungeon-terrain.spec.ts`, `spec/night-difficulty.spec.ts` (the
+last of these specifically tested the now-cancelled night-wanderer-spawn
+feature). Rewritten (mixed obsolete/still-valid tests, kept what's still
+true): `spec/combat.spec.ts` (dropped zone/beacon/respawn tests, kept
+damage/validation, added a 5-test `allEnemiesDefeated` describe block),
+`spec/phase-d-integration.spec.ts` (dropped zone/beacon wire-path tests,
+added an end-to-end `game.victory` broadcast test against a single-enemy
+map), `spec/persistence.spec.ts` (dropped the entire 14-test
+pending-rewards describe block), plus every spec file that constructed a
+`WorldMap` literal needed its `farmArea`/`dungeonEntrance`/`dungeon`
+fields removed to match the simplified type (`spec/map.spec.ts`,
+`spec/craft.spec.ts`, `spec/survival.spec.ts`, `spec/inventory.spec.ts`,
+`spec/build-preview.spec.ts`, `spec/player-persistence.spec.ts`,
+`spec/movement.spec.ts`, `spec/gather.spec.ts`, `spec/building.spec.ts`,
+`spec/object-depleted-sync.spec.ts`, `spec/object-sprites.spec.ts`,
+`spec/sprites.spec.ts`, `spec/object-sprite-anchoring.spec.ts`).
+
+One test fix was a real logic bug, not a type-shape update:
+`spec/state-consistency.spec.ts`'s building-placement test hardcoded
+"build one tile south of the gathered wood node" as its target cell. That
+assumption depended on exactly which cells the farm-area/dungeon-entrance
+carve-outs used to skip during object placement — removing that code
+shifted the map generator's per-cell `rand()` call sequence, which
+(deterministically, same seed) changed which tiles ended up water versus
+land at that specific offset. The fix replaced the hardcoded offset with
+a small search (`nearestFreeCell`) that scans outward from the player for
+an actually-unoccupied, in-range cell using the same occupancy rule
+`Room.doBuild` itself enforces, so the test no longer depends on an
+incidental map-generator output.
+
+As a mutation check on the new win-condition logic specifically (not just
+"the test passes"): `allEnemiesDefeated()`'s `every(...)` was temporarily
+flipped to `some(...)`, confirmed `spec/combat.spec.ts`'s "is false while
+at least one enemy is still alive" test goes red, then reverted and
+reconfirmed green — the same mutation-and-revert discipline every prior
+stage's new tests have used.
+
+**Verification:** `pnpm typecheck` clean across `src/` and `spec/`.
+`pnpm build:client` clean. `pnpm test` — 225/225 passing across 32 spec
+files, 0 regressions, against a real running server (not a mocked one).
+
+**A follow-up correction, same day:** a later request reported "a
+wanderer only starts chasing once I'm close, and the game doesn't say
+zombies should chase from the very start" — tracing `tickEnemy()` showed
+the aggro-range/leash logic from Stage 12's first pass (`WANDERER_AGGRO_
+RANGE_TILES`, `GUARDIAN_AGGRO_RANGE_TILES`, `WANDERER_LEASH_RANGE_TILES`)
+had survived the redesign even though "kill everything, no day/night
+gating" already implied unconditional pursuit — distance-gated aggro was
+an oversight carried over from the old day/night-gated design, not a
+deliberate choice this stage made. Fixed by deleting the aggro-range
+check and the wanderer leash-then-return-home branch entirely:
+`tickEnemy()` now always computes a direction toward the nearest living
+player and moves toward it every tick, with no distance cutoff in either
+direction — the only thing that still holds a wanderer back is the
+pre-existing campfire safe-radius check (the brief's own "defensive
+structure reduces danger" note), unchanged by this fix. The three now-dead
+constants were removed from `constants.ts`. Confirmed via a live harness
+server: a wanderer three times its own aggro range away from an idle
+player was observed closing the distance every tick over several seconds
+of `player.state` snapshots, with no distance threshold at which it
+stopped or turned back. `pnpm test` still 225/225 after this change (no
+test had asserted the old range-gated behaviour as a requirement, so
+nothing needed updating, only verifying nothing broke).
+
+### Stage 13 — "real pictures," part two: rock and four buildings
+
+Continuation of the sprite-replacement work that Stage 1–5 had left
+intentionally incomplete for `tree`, `rock` (the object), and the building
+kinds (`wall`, `floor`, `workbench`, `chest` had never been attempted —
+Stages 1-5 only ever covered terrain, world objects, and characters).
+Requested scope for this pass: `rock` and the four non-campfire building
+kinds; `tree` was explicitly left out this time (no candidate exists in
+any approved pack that doesn't either clash in scale or style — see
+Stage 4's reasoning, unchanged).
+
+**Research, in the already-approved packs only — no new downloads.**
+Re-inspected `forest/tileset.png`, `mountain/tileset.png`, and
+`dungeon/tileset.png` (the three sheets already in the repo and already
+covered by `CREDITS.md`) using the same scratch, dependency-free PNG
+decoder this project's every prior asset stage has used — found and fixed
+a bug in that decoder's own filter-reconstruction loop (a missing
+`prevRow = curRow` update meant every row after the first decoded against
+a stale, zeroed reference row, corrupting anything past row 1) before
+trusting any of its output; confirmed fixed by re-decoding a region whose
+correct appearance was already known from a prior stage's own asset
+inspection work.
+
+- **`chest`**: `dungeon/tileset.png`'s "CONTAINERS 16x16" section has a
+  genuine closed, wood-bound treasure chest, transparent background,
+  unambiguous. A second, more armoured-looking chest variant in the same
+  row was presented as an alternative and not chosen — it reads as a
+  distinct, sturdier chest type, not a better match for this game's one
+  generic chest.
+- **`workbench`**: the same "CONTAINERS 16x16" section also has a slatted
+  wooden crate (two stacked ribbed panels), transparent background —
+  chosen over the row's barrel and cloth-sack containers specifically
+  because its flat horizontal ribbing reads more like a work surface than
+  a storage vessel.
+- **`wall`**: `forest/tileset.png`'s wood-prop cluster (the same area
+  Stage 1-era inspection found ansimuz's fence posts and log piles) has a
+  standalone stack of three tightly-packed vertical planks, transparent
+  background.
+- **`floor`**: the same cluster has a bundle of horizontally-stacked
+  planks, transparent background.
+- **`rock`**: `mountain/tileset.png` has one genuinely isolated,
+  unambiguous round boulder sprite — but, confirmed by an alpha-channel
+  scan of its full 32x32 region (every pixel reads alpha 255), it sits on
+  a fully *opaque* scene background, not a transparent one, unlike every
+  other sprite this project has ever referenced in place. This is new
+  information Stage 4's original rock research didn't have reason to
+  dig into, since Stage 4 rejected the *style* of every candidate it
+  found before background-compositing ever became the blocking issue.
+
+**The rock exception, decided explicitly, not silently.** Given the
+choice between (a) leaving `rock` on its flat-colour fallback, (b)
+writing a derived, colour-keyed cutout of the boulder as a new small PNG,
+or (c) researching an entirely new external pack, the explicit decision
+(confirmed with the user before implementing) was (b). This is a stated,
+one-time exception to this project's "reference the source file's own
+pixels in place, crop by coordinate, never re-encode or modify" policy
+that every other sprite in this repo follows — documented as such in both
+`CREDITS.md` (full generation method: colour-distance mask against the
+scene's own background colour, threshold tuned by inspection to preserve
+the boulder's highlights, re-encoded as a new 32x32 transparent PNG; the
+boulder's own pixels are untouched, only the background was zeroed) and
+`src/client/sprites.ts`'s own `OBJECT_SPRITES` doc-comment, so a future
+reader finds the reasoning at the point of use, not only in history.
+`public/assets/mountain-cutouts/boulder.png` is a new file, 32x32,
+inherits the source sheet's CC0 licence (CC0 explicitly permits
+derivative works).
+
+**Implementation.** `src/client/sprites.ts` gained `OBJECT_SPRITES.rock`
+and a new `BUILDING_SPRITES` export (a `Partial<Record<BuildingKind,
+SpriteRect>>`, the same shape `OBJECT_SPRITES` already uses) covering
+`chest`/`wall`/`workbench`/`floor` — `campfire` is deliberately absent
+from `BUILDING_SPRITES` since a placed campfire building reuses
+`OBJECT_SPRITES.campfire` (same flame art either way). `render.ts`'s
+`drawBuilding()` gained the same sprite-then-flat-colour-fallback
+pattern `drawTile`/`drawObject` already use, including the same
+centring/bottom-anchor formulas for a sprite that isn't exactly
+`TILE_SIZE` in one or both dimensions (every new building sprite here is
+smaller than one tile in at least one dimension, unlike every prior
+sprite stage which only had to handle *larger*-than-tile cases).
+
+**A coordinate bug found and fixed before shipping, not after:** the
+chest sprite's first-measured bounding box (`y:292,h:28`) turned out to
+include the sheet's own "CONTAINERS 16x16" section-label text sitting
+directly above the actual chest art, inflating the measured height by
+exactly the label's own height. Caught by rendering the crop and looking
+at it (the same discipline every prior stage's asset work has used) —
+the first render showed "NERS" (part of the label) floating above the
+chest — not assumed correct from the bounding-box numbers alone. Fixed by
+re-scanning a tighter vertical window that excludes the label row,
+giving the correct `y:307,h:13`. Both `sprites.ts` and
+`spec/building-sprites.spec.ts`'s coordinate assertion were corrected
+together so the test actually encodes the verified-correct value, not the
+first (wrong) measurement.
+
+**Testing.** `spec/object-sprites.spec.ts` updated: the "tree/rock both
+undefined" test narrowed to "tree alone is undefined" (rock now has a
+sprite); added an exact-coordinate assertion for `rock` and a
+`SOLID_OBJECTS.has("rock")` check confirming the sprite addition didn't
+touch collision. New `spec/building-sprites.spec.ts` mirrors
+`object-sprites.spec.ts`'s structure for `BUILDING_SPRITES`: rect-shape
+sanity, coverage (four kinds present, `campfire` absent by design),
+exact verified coordinates for all four, and a `SOLID_BUILDINGS`
+collision-invariance check.
+
+**Verified in a real, running browser — the first stage in this
+project's visual-asset work able to say that.** Every prior sprite stage
+stated plainly that no headless browser was available in this container
+(`chrome-headless-shell: error while loading shared libraries:
+libnspr4.so`, `libnss3.so`, `libnssutil3.so`, `libasound.so.2`, all
+requiring root to install via `apt-get`, which was out of scope). This
+stage found a workaround that doesn't require root: `apt-get download
+<pkg>` fetches a `.deb` without installing it, and `dpkg-deb -x` extracts
+a `.deb`'s contents to an arbitrary unprivileged directory; doing this
+for `libnspr4`, `libnss3`, and `libasound2t64` (`libnssutil3` came bundled
+inside the `libnss3` package) and setting `LD_LIBRARY_PATH` to that
+extraction directory let Playwright's already-downloaded Chromium binary
+actually launch. With a real browser available, this stage:
+- Started the production server (`pnpm build:client`, then
+  `src/server/index.ts` against a scratch SQLite file) and screenshotted
+  the running overworld, confirming rock boulders render as the new round
+  sprite (not the old flat grey square) at a visually coherent scale next
+  to the player and terrain.
+- Seeded one of each new building directly into the scratch database
+  (`persistBuilding`) near the campsite, then screenshotted that cluster
+  and cropped/upscaled the result to confirm each of `wall`/`floor`/
+  `workbench`/`chest` renders as its intended sprite, not a flat-colour
+  square and not another kind's sprite.
+- Separately confirmed (same running server, a scripted WebSocket client
+  driving `player.input`/`player.interact`) that the Stage 12 follow-up's
+  "chase unconditionally, no aggro range" fix holds under real network
+  round-trips: all four wanderers at their full spawn-ring distance were
+  observed closing in on an idle player with no held input, matching the
+  unit-level confirmation above but now through the actual wire protocol
+  and tick loop, not a direct `Room` method call.
