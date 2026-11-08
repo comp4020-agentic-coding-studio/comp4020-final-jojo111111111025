@@ -61,6 +61,12 @@ export const UseBandageMessage = z.object({
   requestId: z.string().min(1).max(64),
 });
 
+/** Sent by any connected player's "Play Again" button on the victory screen — valid only once the shared win condition has already been hit. */
+export const PlayAgainMessage = z.object({
+  type: z.literal("game.playAgain"),
+  requestId: z.string().min(1).max(64),
+});
+
 export const ClientMessage = z.discriminatedUnion("type", [
   RoomJoinMessage,
   PlayerInputMessage,
@@ -71,6 +77,7 @@ export const ClientMessage = z.discriminatedUnion("type", [
   PlayerRespawnMessage,
   CombatAttackMessage,
   UseBandageMessage,
+  PlayAgainMessage,
 ]);
 
 export type ClientMessage = z.infer<typeof ClientMessage>;
@@ -175,6 +182,8 @@ export const ActionResultMessage = z.object({
   enemyHealth: z.number().optional(),
   enemyDied: z.boolean().optional(),
   damageDealt: z.number().optional(),
+  /** Set to the tool's item kind ("axe" | "pickaxe" | "sword") on the exact gather/attack whose use broke it, so the client can show a distinct "your X broke" message instead of reading it off a silent inventory decrease. */
+  toolBroke: z.string().optional(),
 });
 
 /** Broadcast to every connected client the instant an attack lands, so everyone sees the hit/damage/death, not just the attacker. */
@@ -227,6 +236,11 @@ export const GameVictoryMessage = z.object({
   lastKillBy: z.string(),
 });
 
+/** Broadcast to every connected client the instant any player's "Play Again" succeeds, so the whole room's victory screen clears together and everyone's enemy view picks up the freshly revived roster off the next player.state tick. */
+export const GameResetMessage = z.object({
+  type: z.literal("game.reset"),
+});
+
 export const ServerErrorMessage = z.object({
   type: z.literal("server.error"),
   message: z.string(),
@@ -243,4 +257,5 @@ export type ServerMessage =
   | z.infer<typeof EntitySpawnedMessage>
   | z.infer<typeof PlayerDiedMessage>
   | z.infer<typeof GameVictoryMessage>
+  | z.infer<typeof GameResetMessage>
   | z.infer<typeof ServerErrorMessage>;

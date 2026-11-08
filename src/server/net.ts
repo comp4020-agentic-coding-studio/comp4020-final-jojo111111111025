@@ -223,6 +223,7 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
           reason: result.reason,
           inventory: result.inventory,
           objectRemaining: result.objectRemaining,
+          toolBroke: result.toolBroke,
         });
         if (result.ok && result.objectRemaining !== undefined) {
           broadcast(connections, {
@@ -374,6 +375,8 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
           enemyHealth: result.enemyHealth,
           enemyDied: result.enemyDied,
           damageDealt: result.damageDealt,
+          inventory: result.ok && result.toolBroke ? room.getPlayer(conn.id)?.inventory : undefined,
+          toolBroke: result.toolBroke,
         });
         if (result.ok) {
           log("combat_attack", {
@@ -394,6 +397,21 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
             log("game_won", { player_id: conn.id });
             broadcast(connections, { type: "game.victory", lastKillBy: conn.id });
           }
+        }
+        return;
+      }
+
+      if (msg.type === "game.playAgain") {
+        const result = room.playAgain(conn.id);
+        send(socket, {
+          type: "action.result",
+          requestId: msg.requestId,
+          ok: result.ok,
+          reason: result.reason,
+        });
+        if (result.ok) {
+          log("game_reset", { player_id: conn.id });
+          broadcast(connections, { type: "game.reset" });
         }
         return;
       }

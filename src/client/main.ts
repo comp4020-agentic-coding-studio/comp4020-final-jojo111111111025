@@ -41,6 +41,7 @@ const respawnButtonEl = document.getElementById("respawn-button") as HTMLButtonE
 const nightIndicatorEl = document.getElementById("night-indicator")!;
 const victoryScreenEl = document.getElementById("victory-screen")!;
 const victoryDetailEl = document.getElementById("victory-detail")!;
+const playAgainButtonEl = document.getElementById("play-again-button") as HTMLButtonElement;
 const touchJoystickEl = document.getElementById("touch-joystick")!;
 const touchJoystickKnobEl = document.getElementById("touch-joystick-knob")!;
 const touchInteractEl = document.getElementById("touch-interact") as HTMLButtonElement;
@@ -140,6 +141,9 @@ const ITEM_LABELS: Partial<Record<ItemKind, string>> = {
   wood: "wood",
   stone: "stone",
   berries: "berries",
+  axe: "axe",
+  pickaxe: "pickaxe",
+  sword: "sword",
 };
 
 /**
@@ -316,6 +320,13 @@ const client = new GameClient({
       const gained = result.inventory ? findGainedItem(prevInventory, result.inventory) : undefined;
       showActionFeedback(gained ? `Gathered ${ITEM_LABELS[gained] ?? gained}.` : "Gathered a resource.", false);
     }
+    // toolBroke is only ever set on the exact gather/attack result whose use
+    // wore a tool out to 0 (see room.ts's useToolCharge) — takes over
+    // whatever feedback that same result would otherwise show, since "your
+    // tool just broke" matters more than "you gathered a resource."
+    if (result.ok && result.toolBroke) {
+      showActionFeedback(`Your ${ITEM_LABELS[result.toolBroke as ItemKind] ?? result.toolBroke} broke!`, true);
+    }
     if (result.recipeId) {
       const recipe = RECIPES[result.recipeId as keyof typeof RECIPES];
       const isBuilding = recipe?.output.type === "building";
@@ -386,6 +397,10 @@ const client = new GameClient({
       lastKillBy === localPlayerId ? "You landed the final blow." : "A fellow survivor landed the final blow.";
     victoryScreenEl.style.display = "flex";
     playSound("victory");
+  },
+  onGameReset() {
+    victoryShown = false;
+    victoryScreenEl.style.display = "none";
   },
   onError(message) {
     const friendly = ERROR_MESSAGES[message] ?? `Error: ${message}`;
@@ -497,6 +512,10 @@ function flashEnemy(enemyId: string): void {
 
 respawnButtonEl.addEventListener("click", () => {
   client.respawn(crypto.randomUUID());
+});
+
+playAgainButtonEl.addEventListener("click", () => {
+  client.playAgain(crypto.randomUUID());
 });
 
 function canAfford(inputs: Partial<Record<ItemKind, number>>): boolean {

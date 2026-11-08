@@ -54,6 +54,7 @@ export interface ClientHandlers {
     enemyHealth?: number;
     enemyDied?: boolean;
     damageDealt?: number;
+    toolBroke?: string;
   }) => void;
   onEntitySpawned: (building: Building) => void;
   /** Fired the instant any player dies — every building they owned is gone, and (for the victim's own client) their inventory is now empty. */
@@ -68,6 +69,8 @@ export interface ClientHandlers {
   onObjectDepleted: (event: { objectId: string; remaining: number }) => void;
   /** Fired exactly once, the instant the killing blow leaves every enemy on the map dead — the room's shared win condition. */
   onGameVictory: (lastKillBy: string) => void;
+  /** Fired the instant any connected player's "Play Again" succeeds — every enemy on the map is freshly revived (the next player.state tick reflects it), so the victory screen should clear for everyone, not just whoever clicked. */
+  onGameReset: () => void;
   onError: (message: string) => void;
   onClose: () => void;
 }
@@ -229,6 +232,9 @@ export class GameClient {
       case "game.victory":
         this.handlers.onGameVictory(msg.lastKillBy);
         break;
+      case "game.reset":
+        this.handlers.onGameReset();
+        break;
       case "server.error":
         this.lastErrorWasTerminal = TERMINAL_ERRORS.has(msg.message);
         this.handlers.onError(msg.message);
@@ -272,6 +278,10 @@ export class GameClient {
 
   useBandage(requestId: string): void {
     this.send({ type: "item.useBandage", requestId });
+  }
+
+  playAgain(requestId: string): void {
+    this.send({ type: "game.playAgain", requestId });
   }
 
   private send(message: unknown): void {

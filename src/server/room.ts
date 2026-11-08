@@ -9,6 +9,7 @@ import {
   BOSS_ATTACK_RADIUS_TILES,
   BOSS_COOLDOWN_MS,
   BOSS_MAX_HEALTH,
+  BOSS_SPEED_TILES_PER_SEC,
   BOSS_WINDUP_MS,
   BUILD_RANGE_TILES,
   CAMPFIRE_SAFE_RADIUS_TILES,
@@ -25,6 +26,7 @@ import {
   PLAYER_RADIUS,
   PLAYER_SPEED_TILES_PER_SEC,
   SWORD_BONUS_DAMAGE,
+  TOOL_DURABILITY_USES,
   WANDERER_CONTACT_DAMAGE,
   WANDERER_MAX_HEALTH,
   WANDERER_NIGHT_SPEED_MULTIPLIER,
@@ -60,6 +62,8 @@ export interface ActionResult {
   damageDealt?: number;
   /** Set true only on the killing blow that leaves every enemy on the map dead — the signal net.ts uses to broadcast victory, never set on any other result. */
   allEnemiesDefeated?: boolean;
+  /** Set to the tool's ItemKind on the exact gather/attack whose use wore it out to 0 and removed it from inventory — the signal main.ts uses to tell the player their tool just broke, not just that inventory changed. */
+  toolBroke?: ItemKind;
 }
 
 /** Wire-safe view of an enemy — omits internal-only fields (spawn point, timers) that broadcasts never need. */
@@ -88,6 +92,15 @@ interface InternalPlayer extends PlayerState {
   inputDx: number;
   inputDy: number;
   lastAttackAt: number;
+  /**
+   * Uses applied so far toward TOOL_DURABILITY_USES for each tool kind —
+   * in-memory simulation state (same category as lastAttackAt), not
+   * persisted, so a reconnect/restart resets a tool's wear along with the
+   * rest of the per-tick state. Resets to 0 the instant a tool breaks (see
+   * useToolCharge), so a freshly broken-and-replaced tool always starts at
+   * full durability.
+   */
+  toolUses: { axe: number; pickaxe: number; sword: number };
 }
 
 /**
@@ -224,6 +237,7 @@ export class Room {
       inputDx: 0,
       inputDy: 0,
       lastAttackAt: -Infinity,
+      toolUses: { axe: 0, pickaxe: 0, sword: 0 },
     };
     this.players.set(id, player);
     return player;
@@ -247,6 +261,24 @@ export class Room {
   private removeItem(player: InternalPlayer, kind: ItemKind, qty: number): boolean {
     if (player.inventory[kind] < qty) return false;
     player.inventory[kind] -= qty;
+    return true;
+  }
+
+  /**
+   * Records one use of `tool` (axe/pickaxe/sword) toward TOOL_DURABILITY_USES
+   * — called only on a gather/attack that actually applied the tool's
+   * effect, never on a tool-less action. At the durability cap, removes one
+   * copy of the tool from inventory and resets the counter, so a second
+   * copy in inventory (or one crafted later) starts back at full
+   * durability. Returns true exactly when this call broke the tool, so the
+   * caller can surface that to the player.
+   */
+  private useToolCharge(player: InternalPlayer, tool: "axe" | "pickaxe" | "sword"): boolean {
+    player.toolUses[tool] += 1;
+    if (player.toolUses[tool] < TOOL_DURABILITY_USES) return false;
+
+    player.toolUses[tool] = 0;
+    this.removeItem(player, tool, 1);
     return true;
   }
 
@@ -355,55 +387,83 @@ export class Room {
     // night-speed bump above. The only thing that still holds an enemy back
     // is a placed campfire's safe radius (the brief's "defensive structure
     // reduces danger" note), which still only applies to wanderers.
-    const target = this.nearestLivingPlayer(enemy.x, enemy.y);
-
-    let moveX = 0;
-    let moveY = 0;
-
-    if (target && !(isWanderer && this.isNearSafeCampfire(target.x, target.y))) {
-      const dx = target.x - enemy.x;
-      const dy = target.y - enemy.y;
-      const len = Math.hypot(dx, dy) || 1;
-      moveX = dx / len;
-      moveY = dy / len;
-
-      if (len <= ENEMY_CONTACT_RANGE_TILES) {
-        const now = this.now();
-        if (now - enemy.lastContactAt >= ENEMY_CONTACT_COOLDOWN_MS) {
-          enemy.lastContactAt = now;
-          this.damagePlayer(target, contactDamage);
-        }
+    const chase = this.chaseNearestPlayer(enemy, dtSeconds, speed, isWanderer);
+    if (chase && chase.dist <= ENEMY_CONTACT_RANGE_TILES) {
+      const now = this.now();
+      if (now - enemy.lastContactAt >= ENEMY_CONTACT_COOLDOWN_MS) {
+        enemy.lastContactAt = now;
+        this.damagePlayer(chase.target, contactDamage);
       }
-    }
-
-    if (moveX !== 0 || moveY !== 0) {
-      const dist = speed * dtSeconds;
-      const targetX = enemy.x + moveX * dist;
-      const targetY = enemy.y + moveY * dist;
-      if (!this.isEnemyBlocked(targetX, enemy.y)) enemy.x = targetX;
-      if (!this.isEnemyBlocked(enemy.x, targetY)) enemy.y = targetY;
     }
   }
 
-  /** The boss never moves — it telegraphs, then hits every living player within BOSS_ATTACK_RADIUS_TILES. No passive contact damage: the telegraphed cycle is its only damage source. */
-  private tickBoss(enemy: EnemyState, _dtSeconds: number): void {
-    const now = this.now();
-    if (now < enemy.nextActionAt) return;
+  /**
+   * Moves `enemy` one tick toward the nearest living player at `speed`,
+   * respecting the same solid-cell checks as a player. `respectCampfireSafety`
+   * (true only for wanderers — see tickEnemy's comment) skips the chase
+   * entirely while the target stands in a placed campfire's safe radius.
+   * Returns the target and the pre-move distance to it, or undefined if
+   * there's no player to chase, so callers can decide what proximity means
+   * for them (contact damage, attack range, nothing at all).
+   */
+  private chaseNearestPlayer(
+    enemy: EnemyState,
+    dtSeconds: number,
+    speed: number,
+    respectCampfireSafety: boolean,
+  ): { target: InternalPlayer; dist: number } | undefined {
+    const target = this.nearestLivingPlayer(enemy.x, enemy.y);
+    if (!target) return undefined;
+    if (respectCampfireSafety && this.isNearSafeCampfire(target.x, target.y)) return undefined;
 
-    if (!enemy.telegraphing) {
-      enemy.telegraphing = true;
-      enemy.nextActionAt = now + BOSS_WINDUP_MS;
+    const dx = target.x - enemy.x;
+    const dy = target.y - enemy.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const moveX = dx / len;
+    const moveY = dy / len;
+
+    const dist = speed * dtSeconds;
+    const targetX = enemy.x + moveX * dist;
+    const targetY = enemy.y + moveY * dist;
+    if (!this.isEnemyBlocked(targetX, enemy.y)) enemy.x = targetX;
+    if (!this.isEnemyBlocked(enemy.x, targetY)) enemy.y = targetY;
+
+    return { target, dist: len };
+  }
+
+  /**
+   * The boss chases the nearest player like every other enemy, but plants
+   * itself the instant it's close enough to engage: once in range and off
+   * cooldown, it stops to telegraph, holds still through the whole windup,
+   * then hits every living player within BOSS_ATTACK_RADIUS_TILES when it
+   * lands and resumes chasing on cooldown (so it can close in again if its
+   * target fled). No passive contact damage even while closing the distance
+   * — the telegraphed cycle is its only damage source.
+   */
+  private tickBoss(enemy: EnemyState, dtSeconds: number): void {
+    const now = this.now();
+
+    if (enemy.telegraphing) {
+      if (now < enemy.nextActionAt) return; // holds still through the windup
+
+      // Windup finished: land the hit.
+      enemy.telegraphing = false;
+      enemy.nextActionAt = now + BOSS_COOLDOWN_MS;
+      for (const player of this.players.values()) {
+        if (!player.alive) continue;
+        if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= BOSS_ATTACK_RADIUS_TILES) {
+          this.damagePlayer(player, BOSS_ATTACK_DAMAGE);
+        }
+      }
       return;
     }
 
-    // Windup finished: land the hit.
-    enemy.telegraphing = false;
-    enemy.nextActionAt = now + BOSS_COOLDOWN_MS;
-    for (const player of this.players.values()) {
-      if (!player.alive) continue;
-      if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= BOSS_ATTACK_RADIUS_TILES) {
-        this.damagePlayer(player, BOSS_ATTACK_DAMAGE);
-      }
+    const chase = this.chaseNearestPlayer(enemy, dtSeconds, BOSS_SPEED_TILES_PER_SEC, false);
+    if (now < enemy.nextActionAt) return; // still cooling down from its last hit
+
+    if (chase && chase.dist <= BOSS_ATTACK_RADIUS_TILES) {
+      enemy.telegraphing = true;
+      enemy.nextActionAt = now + BOSS_WINDUP_MS;
     }
   }
 
@@ -466,8 +526,13 @@ export class Room {
     if (dist > ATTACK_RANGE_TILES) return { ok: false, reason: "too_far" };
 
     player.lastAttackAt = now;
-    const damage = BASE_ATTACK_DAMAGE + (player.inventory.sword > 0 ? SWORD_BONUS_DAMAGE : 0);
+    const hasSword = player.inventory.sword > 0;
+    const damage = BASE_ATTACK_DAMAGE + (hasSword ? SWORD_BONUS_DAMAGE : 0);
     enemy.health = Math.max(0, enemy.health - damage);
+    // The sword only wears on a hit it actually boosted — an unarmed attack
+    // never touches toolUses.
+    const toolBroke = hasSword && this.useToolCharge(player, "sword") ? "sword" : undefined;
+    if (toolBroke) this.persistInventory(player);
 
     const died = enemy.health === 0;
     if (died) {
@@ -480,6 +545,7 @@ export class Room {
       enemyDied: died,
       damageDealt: damage,
       allEnemiesDefeated: died ? this.allEnemiesDefeated() : undefined,
+      toolBroke,
     };
   }
 
@@ -534,7 +600,7 @@ export class Room {
   }
 
   getPlayers(): PlayerState[] {
-    return [...this.players.values()].map(({ inputDx, inputDy, lastAttackAt, ...rest }) => rest);
+    return [...this.players.values()].map(({ inputDx, inputDy, lastAttackAt, toolUses, ...rest }) => rest);
   }
 
   getBuildings(): Building[] {
@@ -598,18 +664,25 @@ export class Room {
     const dist = Math.hypot(player.x - (object.x + 0.5), player.y - (object.y + 0.5));
     if (dist > GATHER_RANGE_TILES) return { ok: false, reason: "too_far" };
 
-    const yieldAmount = this.gatherYieldFor(player, object.resource.kind);
-    const granted = this.addItem(player, object.resource.kind, yieldAmount);
+    const resourceKind = object.resource.kind;
+    const tool = resourceKind === "wood" && player.inventory.axe > 0 ? "axe" : resourceKind === "stone" && player.inventory.pickaxe > 0 ? "pickaxe" : undefined;
+    const yieldAmount = this.gatherYieldFor(player, resourceKind);
+    const granted = this.addItem(player, resourceKind, yieldAmount);
     if (granted <= 0) return { ok: false, reason: "inventory_full" };
 
     object.resource.remaining -= 1;
     this.persistence.nodeRemaining?.(object.id, object.resource.remaining);
+    // The tool only wears if it actually boosted this gather — a plain,
+    // tool-less gather (or one with the wrong tool for this resource) never
+    // touches toolUses.
+    const toolBroke = tool && this.useToolCharge(player, tool) ? tool : undefined;
     this.persistInventory(player);
 
     return {
       ok: true,
       inventory: { ...player.inventory },
       objectRemaining: object.resource.remaining,
+      toolBroke,
     };
   }
 
@@ -872,11 +945,30 @@ export class Room {
   }
 
   /**
+   * Validates and applies a "play again" after the shared win condition has
+   * already been hit: only valid once allEnemiesDefeated() is true (there's
+   * nothing to reset otherwise), and it only resets enemies — unlike
+   * respawn(), the requesting player is alive and mid-celebration, not dead,
+   * so their health/position/inventory are left exactly as they are. Any
+   * connected player can trigger it; net.ts broadcasts the reset to every
+   * client so the whole room's victory screen clears together, not just the
+   * requester's.
+   */
+  playAgain(playerId: string): ActionResult {
+    if (!this.players.has(playerId)) return { ok: false, reason: "unknown_player" };
+    if (!this.allEnemiesDefeated()) return { ok: false, reason: "not_won" };
+
+    this.resetAllEnemies();
+    return { ok: true };
+  }
+
+  /**
    * Resets every enemy on the map — alive or dead — back to full health at
-   * its original spawn point. Called on every respawn so dying never leaves
-   * the fight partway won: the shared win condition (allEnemiesDefeated)
-   * only means something if a respawn can't quietly dodge it by leaving
-   * already-dead enemies dead while reviving everything else.
+   * its original spawn point. Called on every respawn (see respawn()) and
+   * on playAgain() so neither leaves the fight partway won: the shared win
+   * condition (allEnemiesDefeated) only means something if those paths
+   * can't quietly dodge it by leaving already-dead enemies dead while
+   * reviving everything else.
    */
   private resetAllEnemies(): void {
     for (const enemy of this.enemies.values()) {

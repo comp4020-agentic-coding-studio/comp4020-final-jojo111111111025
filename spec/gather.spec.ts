@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Room } from "../src/server/room.js";
-import { AXE_WOOD_YIELD, PICKAXE_STONE_YIELD } from "../src/shared/constants.js";
+import { AXE_WOOD_YIELD, PICKAXE_STONE_YIELD, TOOL_DURABILITY_USES } from "../src/shared/constants.js";
 import { emptyInventory, type WorldMap } from "../src/shared/types.js";
 
 /**
@@ -225,5 +225,80 @@ describe("Room.interact — tool-boosted gather yield", () => {
     const result = room.interact("p1", "tree-1", "req-1");
     expect(result.ok).toBe(true);
     expect(result.inventory?.wood).toBe(99); // granted only 1, not the full AXE_WOOD_YIELD of 2, since only 1 slot of room remained
+  });
+});
+
+/** A tree with enough stock for well over TOOL_DURABILITY_USES gathers, for durability tests that need more uses than the default 10-charge tree-1 permits. */
+function makeDurabilityTestMap(): WorldMap {
+  const map = makeTestMap();
+  return {
+    ...map,
+    objects: map.objects.map((o) =>
+      o.id === "tree-1" ? { ...o, resource: { ...o.resource!, remaining: TOOL_DURABILITY_USES * 3, maxRemaining: TOOL_DURABILITY_USES * 3 } } : o,
+    ),
+  };
+}
+
+describe("Room.interact — tool durability", () => {
+  it(`breaks the axe after TOOL_DURABILITY_USES (${TOOL_DURABILITY_USES}) boosted gathers, removing it from inventory`, () => {
+    const room = new Room(makeDurabilityTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), axe: 1 });
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+
+    for (let i = 0; i < TOOL_DURABILITY_USES - 1; i++) {
+      const result = room.interact("p1", "tree-1", `use-${i}`);
+      expect(result.ok).toBe(true);
+      expect(result.toolBroke).toBeUndefined();
+      expect(room.getPlayer("p1")!.inventory.axe).toBe(1); // still intact
+    }
+
+    const breaking = room.interact("p1", "tree-1", `use-${TOOL_DURABILITY_USES - 1}`);
+    expect(breaking.ok).toBe(true);
+    expect(breaking.toolBroke).toBe("axe");
+    expect(room.getPlayer("p1")!.inventory.axe).toBe(0);
+  });
+
+  it("a freshly crafted replacement axe starts at full durability, not wherever the broken one left off", () => {
+    const room = new Room(makeDurabilityTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), axe: 1 });
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+
+    for (let i = 0; i < TOOL_DURABILITY_USES; i++) {
+      room.interact("p1", "tree-1", `use-${i}`);
+    }
+    expect(room.getPlayer("p1")!.inventory.axe).toBe(0);
+
+    // Hand the player a brand-new axe (standing in for a fresh craft) and
+    // confirm it survives a full fresh cycle of uses before breaking again,
+    // rather than breaking on its very first use.
+    room.getPlayer("p1")!.inventory.axe = 1;
+    for (let i = 0; i < TOOL_DURABILITY_USES - 1; i++) {
+      const result = room.interact("p1", "tree-1", `use-second-${i}`);
+      expect(result.toolBroke).toBeUndefined();
+    }
+    expect(room.getPlayer("p1")!.inventory.axe).toBe(1);
+  });
+
+  it("gathering without a tool never wears one down (no tool to wear)", () => {
+    const room = new Room(makeDurabilityTestMap());
+    room.addPlayer("p1", "Alice");
+    walkPlayerTo(room, "p1", 5.5, 5.5);
+
+    for (let i = 0; i < TOOL_DURABILITY_USES + 2; i++) {
+      const result = room.interact("p1", "tree-1", `use-${i}`);
+      expect(result.toolBroke).toBeUndefined();
+    }
+  });
+
+  it("gathering stone with a pickaxe wears the pickaxe, not the axe held at the same time", () => {
+    const room = new Room(makeTestMap());
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), axe: 1, pickaxe: 1 });
+    walkPlayerTo(room, "p1", 7.5, 8.5);
+
+    for (let i = 0; i < TOOL_DURABILITY_USES; i++) {
+      room.interact("p1", "rock-1", `use-${i}`);
+    }
+    expect(room.getPlayer("p1")!.inventory.pickaxe).toBe(0);
+    expect(room.getPlayer("p1")!.inventory.axe).toBe(1); // untouched — this gather never involved the axe
   });
 });

@@ -132,6 +132,65 @@ describe("combat — full wire path", () => {
     },
     15000,
   );
+
+  it(
+    "a won room's game.playAgain revives the enemy and broadcasts game.reset to every connected client",
+    async () => {
+      const closeSpawn: EnemySpawn = { kind: "wanderer", x: 2, y: 1 };
+      server = await startTestServer({ roomCode: "TEST", map: compactIntegrationMap(), enemySpawns: [closeSpawn] });
+      const attacker = new TestClient(server.wsUrl);
+      const observer = new TestClient(server.wsUrl);
+      await attacker.join("Alice", "TEST");
+      await observer.join("Bob", "TEST");
+
+      const snapshot = await attacker.waitFor((m) => m.type === "world.snapshot");
+      const enemy = snapshot.enemies[0];
+
+      let died = false;
+      for (let i = 0; i < 10 && !died; i++) {
+        attacker.send({ type: "combat.attack", requestId: `atk-${i}`, targetId: enemy.id });
+        const result = await attacker.waitFor((m) => m.requestId === `atk-${i}`);
+        if (result.enemyDied) died = true;
+        if (!died) await new Promise((resolve) => setTimeout(resolve, 650));
+      }
+      expect(died).toBe(true);
+      await attacker.waitFor((m) => m.type === "game.victory");
+      await observer.waitFor((m) => m.type === "game.victory");
+      expect(server.room.allEnemiesDefeated()).toBe(true);
+
+      // The observer (not the one who landed the final blow) triggers the reset.
+      observer.send({ type: "game.playAgain", requestId: "play-again-1" });
+      const result = await observer.waitFor((m) => m.requestId === "play-again-1");
+      expect(result.ok).toBe(true);
+
+      const resetToAttacker = await attacker.waitFor((m) => m.type === "game.reset");
+      const resetToObserver = await observer.waitFor((m) => m.type === "game.reset");
+      expect(resetToAttacker).toBeDefined();
+      expect(resetToObserver).toBeDefined();
+
+      expect(server.room.allEnemiesDefeated()).toBe(false);
+      expect(server.room.getEnemy(enemy.id)!.alive).toBe(true);
+      expect(server.room.getEnemy(enemy.id)!.health).toBe(WANDERER_MAX_HEALTH);
+
+      attacker.close();
+      observer.close();
+    },
+    15000,
+  );
+
+  it("game.playAgain is rejected before the room has been won", async () => {
+    const farSpawn: EnemySpawn = { kind: "wanderer", x: 9, y: 9 };
+    server = await startTestServer({ roomCode: "TEST", map: compactIntegrationMap(), enemySpawns: [farSpawn] });
+    const client = new TestClient(server.wsUrl);
+    await client.join("Alice", "TEST");
+
+    client.send({ type: "game.playAgain", requestId: "play-again-1" });
+    const result = await client.waitFor((m) => m.requestId === "play-again-1");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("not_won");
+
+    client.close();
+  });
 });
 
 describe("cross-room isolation for combat actions", () => {

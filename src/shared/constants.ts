@@ -42,6 +42,17 @@ export const BASE_GATHER_YIELD = 1;
 export const AXE_WOOD_YIELD = 2;
 export const PICKAXE_STONE_YIELD = 2;
 
+/**
+ * How many times a single axe/pickaxe/sword can apply its effect before it
+ * breaks and is removed from inventory — an axe-boosted gather, a
+ * pickaxe-boosted gather, and a sword-boosted attack each count as one use
+ * of that tool. Tracked per-player as in-memory simulation state (the same
+ * category as attack cooldown), not per physical item, so holding more than
+ * one of the same tool just means the next one is full strength the instant
+ * the current one breaks.
+ */
+export const TOOL_DURABILITY_USES = 10;
+
 // --- Day/night (every enemy aggros unconditionally regardless of time of
 // day, since the "kill everything to win" redesign — see room.ts's
 // tickEnemy. The one gameplay effect night still has is
@@ -76,6 +87,8 @@ export const BOSS_WINDUP_MS = 1200;
 export const BOSS_ATTACK_RADIUS_TILES = 2;
 export const BOSS_ATTACK_DAMAGE = 25;
 export const BOSS_COOLDOWN_MS = 3000;
+/** Slower than a guardian — the boss chases like every other enemy, but its real danger is the telegraphed AoE it opens up once in range, not out-walking a fleeing player. */
+export const BOSS_SPEED_TILES_PER_SEC = 1.2;
 
 /** Minimum time between an enemy's contact-damage hits on the same player, so standing in an enemy doesn't melt health every tick. */
 export const ENEMY_CONTACT_COOLDOWN_MS = 800;

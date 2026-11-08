@@ -3,9 +3,12 @@ import { Room } from "../src/server/room.js";
 import {
   ATTACK_COOLDOWN_MS,
   BASE_ATTACK_DAMAGE,
+  BOSS_SPEED_TILES_PER_SEC,
+  BOSS_WINDUP_MS,
   DAY_DURATION_MS,
   GUARDIAN_SPEED_TILES_PER_SEC,
   SWORD_BONUS_DAMAGE,
+  TOOL_DURABILITY_USES,
   WANDERER_NIGHT_SPEED_MULTIPLIER,
   WANDERER_SPEED_TILES_PER_SEC,
 } from "../src/shared/constants.js";
@@ -243,6 +246,80 @@ describe("Room.allEnemiesDefeated — the shared win condition", () => {
   });
 });
 
+describe("Room.playAgain", () => {
+  function killEnemy(room: Room, clock: ReturnType<typeof makeClock>, playerId: string, enemyId: string): void {
+    for (let i = 0; i < 40 && room.getEnemy(enemyId)!.alive; i++) {
+      room.attack(playerId, enemyId, `hit-${i}`);
+      clock.advance(ATTACK_COOLDOWN_MS + 1);
+    }
+    expect(room.getEnemy(enemyId)!.alive).toBe(false);
+  }
+
+  it("rejects an unknown player", () => {
+    const room = new Room(makeTestMap(), {}, [], new Map(), Date.now, Date.now(), [{ kind: "wanderer", x: 1, y: 1 }]);
+    const result = room.playAgain("ghost");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("unknown_player");
+  });
+
+  it("rejects when the room hasn't been won yet", () => {
+    const room = new Room(makeTestMap(), {}, [], new Map(), Date.now, Date.now(), [{ kind: "wanderer", x: 1, y: 1 }]);
+    room.addPlayer("p1", "Alice");
+    const result = room.playAgain("p1");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("not_won");
+  });
+
+  it("revives every enemy back to full health at its spawn point once the room has been won", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [{ kind: "wanderer", x: 1, y: 1 }]);
+    room.addPlayer("p1", "Alice");
+    const [enemy] = room.getEnemies();
+    killEnemy(room, clock, "p1", enemy!.id);
+    expect(room.allEnemiesDefeated()).toBe(true);
+
+    const result = room.playAgain("p1");
+    expect(result.ok).toBe(true);
+
+    const revived = room.getEnemy(enemy!.id)!;
+    expect(revived.alive).toBe(true);
+    expect(revived.health).toBe(revived.maxHealth);
+    expect(revived.x).toBe(revived.spawnX);
+    expect(revived.y).toBe(revived.spawnY);
+    expect(room.allEnemiesDefeated()).toBe(false);
+  });
+
+  it("leaves the requesting player's health, position, and inventory untouched — unlike respawn(), they were alive and winning, not dead", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [{ kind: "wanderer", x: 1, y: 1 }]);
+    room.addPlayer("p1", "Alice");
+    const [enemy] = room.getEnemies();
+    killEnemy(room, clock, "p1", enemy!.id);
+
+    const before = { ...room.getPlayer("p1")! };
+    room.playAgain("p1");
+    const after = room.getPlayer("p1")!;
+
+    expect(after.health).toBe(before.health);
+    expect(after.x).toBe(before.x);
+    expect(after.y).toBe(before.y);
+    expect(after.alive).toBe(before.alive);
+  });
+
+  it("can be triggered by any connected player, not just whoever landed the final blow", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [{ kind: "wanderer", x: 1, y: 1 }]);
+    room.addPlayer("p1", "Alice");
+    room.addPlayer("p2", "Bob");
+    const [enemy] = room.getEnemies();
+    killEnemy(room, clock, "p1", enemy!.id);
+
+    const result = room.playAgain("p2");
+    expect(result.ok).toBe(true);
+    expect(room.allEnemiesDefeated()).toBe(false);
+  });
+});
+
 describe("wanderer night speed", () => {
   // Spawned far enough from the player that it never reaches contact range
   // during the single tick measured, so the only thing changing between
@@ -278,5 +355,85 @@ describe("wanderer night speed", () => {
     const nightMoved = distanceMovedInOneTick(farGuardian, 0, DAY_DURATION_MS);
     expect(dayMoved).toBeCloseTo(GUARDIAN_SPEED_TILES_PER_SEC, 5);
     expect(nightMoved).toBeCloseTo(GUARDIAN_SPEED_TILES_PER_SEC, 5);
+  });
+});
+
+describe("boss movement", () => {
+  const farBoss: EnemySpawn = { kind: "boss", x: 9, y: 1 };
+
+  it("chases the nearest player at BOSS_SPEED_TILES_PER_SEC while not telegraphing", () => {
+    const room = new Room(makeTestMap(), {}, [], new Map(), Date.now, Date.now(), [farBoss]);
+    room.addPlayer("p1", "Alice"); // near spawn (1.5, 1.5) — draws the boss toward it
+    const before = room.getEnemies()[0]!;
+    const startX = before.x;
+    const startY = before.y;
+
+    room.tick(1); // 1 real second of movement
+
+    const after = room.getEnemies()[0]!;
+    const moved = Math.hypot(after.x - startX, after.y - startY);
+    expect(moved).toBeCloseTo(BOSS_SPEED_TILES_PER_SEC, 5);
+    expect(after.telegraphing).toBe(false);
+  });
+
+  it("stops moving the instant it starts telegraphing, and stays put through the whole windup", () => {
+    const clock = makeClock();
+    // Spawned already within BOSS_ATTACK_RADIUS_TILES of the player, so it
+    // starts telegraphing on the very first tick instead of spending ticks
+    // closing the distance first.
+    const closeBoss: EnemySpawn = { kind: "boss", x: 2, y: 1 };
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [closeBoss]);
+    room.addPlayer("p1", "Alice");
+
+    room.tick(1); // in range and off cooldown (nextActionAt starts at -Infinity) — starts telegraphing this tick
+    const telegraphStart = room.getEnemies()[0]!;
+    expect(telegraphStart.telegraphing).toBe(true);
+    const plantedX = telegraphStart.x;
+    const plantedY = telegraphStart.y;
+
+    clock.advance(BOSS_WINDUP_MS / 2);
+    room.tick(1); // would move BOSS_SPEED_TILES_PER_SEC tiles if it were still chasing
+    const midWindup = room.getEnemies()[0]!;
+    expect(midWindup.x).toBeCloseTo(plantedX, 5);
+    expect(midWindup.y).toBeCloseTo(plantedY, 5);
+  });
+});
+
+describe("Room.attack — sword durability", () => {
+  // BOSS_MAX_HEALTH (300) comfortably outlasts TOOL_DURABILITY_USES hits at
+  // BASE_ATTACK_DAMAGE + SWORD_BONUS_DAMAGE (25) each, so the target stays
+  // alive for the whole test — durability wear is the thing under test, not
+  // the kill.
+  const BOSS_SPAWN: EnemySpawn = { kind: "boss", x: 2, y: 1 };
+
+  it(`breaks the sword after TOOL_DURABILITY_USES (${TOOL_DURABILITY_USES}) boosted hits, removing it from inventory`, () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [BOSS_SPAWN]);
+    room.addPlayer("p1", "Alice", { ...emptyInventory(), sword: 1 });
+    const [enemy] = room.getEnemies();
+
+    for (let i = 0; i < TOOL_DURABILITY_USES - 1; i++) {
+      const result = room.attack("p1", enemy!.id, `hit-${i}`);
+      expect(result.ok).toBe(true);
+      expect(result.toolBroke).toBeUndefined();
+      clock.advance(ATTACK_COOLDOWN_MS + 1);
+    }
+    expect(room.getPlayer("p1")!.inventory.sword).toBe(1); // still intact after 9 uses
+
+    const breaking = room.attack("p1", enemy!.id, `hit-${TOOL_DURABILITY_USES - 1}`);
+    expect(breaking.ok).toBe(true);
+    expect(breaking.toolBroke).toBe("sword");
+    expect(room.getPlayer("p1")!.inventory.sword).toBe(0);
+  });
+
+  it("an unarmed attack never wears a sword down (there isn't one in play)", () => {
+    const clock = makeClock();
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), [BOSS_SPAWN]);
+    room.addPlayer("p1", "Alice");
+    const [enemy] = room.getEnemies();
+
+    const result = room.attack("p1", enemy!.id, "r1");
+    expect(result.ok).toBe(true);
+    expect(result.toolBroke).toBeUndefined();
   });
 });

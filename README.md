@@ -38,7 +38,10 @@ server issues on first load.
 - Crafted tools aren't equipped — holding one in your inventory is enough
   for its effect to apply automatically. A sword adds `SWORD_BONUS_DAMAGE`
   to every attack; an axe doubles wood yield per gather (from a tree); a
-  pickaxe doubles stone yield per gather (from a rock). A bandage (made
+  pickaxe doubles stone yield per gather (from a rock). Every tool has
+  limited durability: each gather/attack it actually boosts counts as one
+  use, and after `TOOL_DURABILITY_USES` (10) it breaks and is removed from
+  your inventory — craft another to keep the bonus going. A bandage (made
   from berries) is a consumable: pressing `H` with at least one in your
   inventory spends it to restore `BANDAGE_HEAL_AMOUNT` health, capped at
   full health.
@@ -54,6 +57,16 @@ server issues on first load.
   unconditionally from the moment they exist, gives wanderers (not
   guardians or the boss) a real edge at night: they move 50% faster for
   the night's duration, then drop back to their normal speed at dawn.
+- The boss chases like any other enemy, but plants itself the instant it
+  starts telegraphing: it holds still through the windup, then hits every
+  player within range when the hit lands, and only resumes the chase once
+  its cooldown ends.
+- Killing every enemy on the map wins the room. The victory screen's "Play
+  Again" button (any connected player can press it) revives every enemy —
+  dead or alive — back to full health at its spawn point and clears the
+  victory screen for everyone in the room, so a won room can be replayed
+  without a server restart. It doesn't touch players: health, position, and
+  inventory are left exactly as they were at the win.
 - The player list at the top shows everyone in the room and whether
   they're connected or just holding their slot during a reconnect grace
   window.
