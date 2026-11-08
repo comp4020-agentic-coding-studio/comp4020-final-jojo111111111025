@@ -30,7 +30,6 @@ Keep this file concise and actionable. Detailed explanations belong in the linke
 - Enemies, including the boss, are transient and regenerate from the deterministic map seed after restart. Their kill progress does not persist.
 - Farming and crop growth are not part of the current design. Do not reintroduce removed mechanics without an explicit design decision.
 - Every death must go through `Room.damagePlayer()`. At zero health, `wipePlayerOnDeath()` clears the player's inventory and owned buildings from memory and SQLite.
-- Death events must be broadcast to all clients through `player.died`.
 - Enemy resets must not reset unrelated world or surviving-player state, generate duplicate enemies, or corrupt the existing world. Any connected player may request the reset.
 - Collected or depleted resources must remain consistent across clients and reconnects.
 - Validate inventory limits and all gameplay actions on the server.
@@ -44,7 +43,7 @@ See [`PROCESS.md`](PROCESS.md) and [`docs/adr/`](docs/adr/) for implementation r
 - Do not introduce competing sources of truth between client and server.
 - Log significant events: session issuance/rejection, joins, reconnects, disconnects, evictions, combat, wins, resets, deaths, and resource resets.
 - Do not log every tick or movement input. Never log credentials or signing secrets.
-- Important actions must provide understandable feedback, including successful interactions, failures, collection, crafting, combat, death, and victory.
+- Important actions must provide understandable feedback, including successful interactions, failures, collection, crafting, combat, death feedback visible to the affected player, and victory.
 
 ## 5. Interface and controls
 
