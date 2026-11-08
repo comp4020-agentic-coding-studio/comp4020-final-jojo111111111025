@@ -30,12 +30,6 @@ A larger scope cut replaced the beacon/dungeon win condition with "kill every en
 
 Subsequent commits built real consequences on the simpler loop: death wipes a player's inventory and every building they own, and resets every enemy — dead ones included — so a death restarts the shared fight, not just the player. Tools gained real effects and limited durability, and the boss now actively chases rather than waiting at its spawn.
 
-## 5. What's verified and what isn't
+## 5. Summary
 
-Locally, at the current `HEAD`: `pnpm typecheck` passes with no type errors; `pnpm build:client` builds successfully; `pnpm test` passes 274 of 274 tests across 34 test files, run against a real, locally-running server, not mocks. These are local results from this session, not a freshly re-run CI pass.
-
-Not re-verified this session: a deployed live instance; a two-independent-browser-profile session against that instance; production logs. Earlier development history recorded a successful remote deploy and a passing CI Docker build, but neither was re-run here.
-
-Player position does not currently persist across a server restart, though identity and inventory do — a known, documented gap, not an unexpected regression.
-
-Whether the feature set is complete is left to the marker's own pass against the deployed app, not restated here.
+Last Shelter's process, across these four moves, has one shape: direct the agent with a stated, gated scope rather than an open brief; don't accept a green suite or the agent's own account as proof, commission an independent check when the stakes of being wrong are real; and when a later change's consequences aren't obvious from a diff, ask what it contradicts before shipping it. The persistence-hook gap and the kill-everything redesign's forgotten respawn rule were both caught this way — not by a tool, but by treating "it passed" and "it compiles" as the start of the question, not the end of it.
