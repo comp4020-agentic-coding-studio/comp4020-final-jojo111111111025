@@ -2,8 +2,9 @@
 
 A browser-based, top-down 2D cooperative survival/crafting game. One to four
 players share one authoritative world over WebSockets: gather resources,
-craft tools and buildings, farm, fight off wanderers and a boss, and
-activate a beacon together to win.
+craft tools and buildings, and fight off wanderers, guardians, and a boss.
+**The goal is to kill every enemy on the map** — once the last one falls,
+the room wins together.
 
 ## Run it
 
@@ -71,11 +72,10 @@ server issues on first load.
   they're connected or just holding their slot during a reconnect grace
   window.
 - A toast near the top of the screen confirms a gather ("Gathered
-  wood."), a craft/build ("Crafted axe."), or a zone transition ("Entered
-  the dungeon.") — green for a success, red for a rejection.
-- Background music plays continuously: a calm ambience in the overworld,
-  a cave atmosphere in the dungeon, switching the moment you cross the
-  zone boundary.
+  wood.") or a craft/build ("Crafted axe.") — green for a success, red for
+  a rejection.
+- Background music plays continuously: a calm overworld ambience, the only
+  track since there's a single shared map, not separate zones.
 
 ## Identity and authorization
 
@@ -85,9 +85,9 @@ with a secret generated once and persisted server-side) — there is no
 account, login, or password. A missing, tampered, expired, or revoked
 cookie is never partially trusted: it's treated like no cookie at all,
 and a fresh anonymous identity is minted instead. Every mutating action
-(gather, craft, build, farm, attack, deposit, activate) is revalidated
-server-side against that verified identity — range, cooldown, zone, and
-ownership are never taken on the client's word. See
+(gather, craft, build, chest transfer, attack, bandage use, respawn) is
+revalidated server-side against that verified identity — range, cooldown,
+and ownership are never taken on the client's word. See
 [`docs/adr/001-anonymous-identity.md`](docs/adr/001-anonymous-identity.md)
 for the full reasoning and verification evidence.
 
@@ -101,57 +101,55 @@ pnpm test
 ## Architecture
 
 - `src/shared/` — types, constants, the map generator, the recipe
-  registry, the pure day/night and crop-growth functions, and the
-  Zod-validated WebSocket message schemas shared by client and server.
+  registry, the pure day/night function, and the Zod-validated WebSocket
+  message schemas shared by client and server.
 - `src/server/` — `db.ts` (SQLite + migrations), `identity.ts`
   (signed-cookie minting/verification, revocation), `world.ts`
-  (state load-and-persist, pending-reward claiming), `room.ts` (the
-  authoritative simulation — movement, combat, dungeon, beacon), `net.ts`
-  (WebSocket dispatch, room/player-cap enforcement, reconnect handling,
-  rate limiting, structured logging), `index.ts` (HTTP server: identity
-  cookie, static files, `/readme/`, the `/ws` upgrade).
+  (state load-and-persist), `room.ts` (the authoritative simulation —
+  movement, gathering, crafting, building, combat, enemy AI, death/respawn,
+  the win condition), `net.ts` (WebSocket dispatch, room/player-cap
+  enforcement, reconnect handling, rate limiting, structured logging),
+  `index.ts` (HTTP server: identity cookie, static files, `/readme/`, the
+  `/ws` upgrade).
 - `src/client/` — vanilla TypeScript, Canvas 2D rendering, native HTML UI.
 - `spec/` — Vitest unit and full wire-protocol integration tests (`spec/
   helpers/server-harness.ts` spins up a real HTTP+WS server per test
   against a temp SQLite file) covering movement, gathering, crafting,
-  building, farming, combat, day/night, dungeon zoning, beacon victory,
-  reconnect, room limits, and cross-room isolation.
+  building, chest transfer, combat, enemy pathfinding, day/night, death and
+  respawn, the victory/play-again cycle, reconnect, room limits, and
+  cross-room isolation.
 
 ## Art
 
 The overworld's grass and water use LimeZu's Serene Village - revamped
-(CC-BY 4.0); its forest ground and mountain terrain use ansimuz's Tiny RPG
-Forest and Mountain tilesets (CC0); the dungeon uses Calciumtrice's Dungeon
-Tileset (CC-BY 3.0); bushes use a sprite from ansimuz's separate Tiny RPG
-Town pack (CC0). Full credits and license text are in
+(CC-BY 4.0); its forest ground, mountain terrain, and the `rock` object use
+ansimuz's Tiny RPG Forest and Mountain tilesets (CC0); enemy, player,
+chest, and workbench sprites come from Calciumtrice's Dungeon Tileset
+(CC-BY 3.0, used here purely as an art source — the game has no separate
+dungeon zone); bushes use a sprite from ansimuz's separate Tiny RPG Town
+pack (CC0). Full credits and license text are in
 [`public/assets/CREDITS.md`](public/assets/CREDITS.md). Terrain and most
-objects (campfires, the ancient beacon, dungeon entrances/exits, bushes)
-are sprited; trees and the rock object render as flat colour — not because
-no candidate asset was ever found, but because every one found was
-rejected on a concrete ground: a scale mismatch 6-7x this game's existing
-objects for trees, a colour/style mismatch for the rock. A grass tile next
-to water draws a soft, rotated edge sprite instead of a hard colour cut;
-every other terrain boundary (grass/rock, grass/forest, rock/water) still
-draws as a hard edge, and even the water/grass edge stops at a straight
-line — there's no rounded-corner variant, because none exists in the
-source art (confirmed by a full programmatic scan, not just unsearched).
-See `PROCESS.md`'s Stage 2, Stage 4, and Stage 5 sections for the full
-per-asset reasoning. The player and all three enemy
-kinds also use sprites from the dungeon tileset. These are single static
-poses with no walk/attack animation and no facing variation — a moving
-character doesn't visibly animate or turn. The local player is still told
-apart from everyone else the same way it always was — by colour — via a
-small yellow/blue marker on the ground beneath each player's feet, since
-the shared character sprite itself carries no colour of its own; see
-`PROCESS.md`'s Stage 3 section for the full reasoning.
+objects (campfires, rocks, bushes) and all four non-campfire building
+kinds (wall, floor, workbench, chest) are sprited; the tree object alone
+still renders as flat colour — every candidate asset found was rejected on
+a concrete ground (a scale mismatch 6-7x this game's existing objects). A
+grass tile next to water draws a soft, rotated edge sprite instead of a
+hard colour cut; every other terrain boundary (grass/rock, grass/forest,
+rock/water) still draws as a hard edge, and even the water/grass edge
+stops at a straight line — there's no rounded-corner variant, because none
+exists in the source art. See `PROCESS.md` for the full per-asset
+reasoning. The player and all three enemy sprites are single static poses
+with no walk/attack animation and no facing variation — a moving character
+doesn't visibly animate or turn. The local player is still told apart from
+everyone else the same way it always was — by colour — via a small
+yellow/blue marker on the ground beneath each player's feet, since the
+shared character sprite itself carries no colour of its own.
 
 Landing a hit flashes the enemy white and shakes the screen; taking damage
-flashes the screen red and shakes it too. Seven CC0 sound effects (combat,
-gathering, crafting, chest, errors, and a beacon-activation victory
-fanfare) play at their matching moments — see `PROCESS.md`'s Stage 6
-section for which clip plays on which event and why two evaluated clips
-(a sword-clash sound with no mechanic to attach to, and a footstep-loop
-set) aren't used yet.
+flashes the screen red and shakes it too. Seven CC0 sound effects (attack,
+death, gathering, crafting, chest, errors, and a victory fanfare on
+killing the last enemy) play at their matching moments — see
+`PROCESS.md` for which clip plays on which event.
 
 ## Persistence
 

@@ -29,45 +29,38 @@ this drift from what the code actually guarantees.
   resolved identity, never a client-claimed one.** `net.ts` resolves
   `conn.id` once, from the signed cookie, when a WebSocket connects; no
   client message carries or can override an identity field. `room.ts`'s
-  gather/craft/build/chest/farm/attack/deposit/activate/zone methods all
-  take that resolved id as a parameter, not something read back out of the
-  message.
-- **Every authoritative action is zone-checked.** The overworld and the
-  dungeon are disjoint coordinate spaces that can share numeric `(x, y)`.
-  Gather/build/chest/farm are overworld-only; combat/beacon/zone-transition
-  checks validate the acting player's `zone` against the target/object's
-  zone. A new action that touches world state needs its own `wrong_zone`
-  check, not an assumption that the overworld check elsewhere covers it.
+  interact/craft/build/chestTransfer/attack/useBandage/respawn/playAgain
+  methods all take that resolved id as a parameter, not something read back
+  out of the message.
 - **A superseded connection can never mutate state.** A second connection
   for the same identity bumps `nextGeneration`; `isCurrent()` must gate any
   handler that mutates room state on behalf of a connection, the same way
   `room.join`'s own supersede logic and the `socket.on("close")` handler
   already do. Don't add a new message handler that skips this check.
-- **Atomic placement/activation races are resolved by the database, not
-  application logic re-checking state as a separate step.** Building
-  placement (`UNIQUE(x, y)`), boss-defeated-once, and beacon activation
-  (`UPDATE ... WHERE completed_at IS NULL`) all rely on SQLite's own
-  constraint/atomic-update enforcement. Don't replace one of these with a
-  read-then-write pair that isn't backed by the same guarantee.
-- **A reward or mutation only ever commits with its bookkeeping, never
-  separately.** `claimAndApplyPendingRewards` claims a pending reward,
-  merges it into inventory, and marks it settled inside one SQLite
-  transaction — a crash or thrown error between those steps rolls all of
-  it back. Any new durable, multi-step state change should follow the same
-  pattern rather than leaving a window where one side committed and the
-  other didn't.
-- **Day/night and crop growth are pure functions of elapsed wall-clock
-  time, never a ticked or persisted "current phase."** `computeTimeOfDay`
-  and crop-stage computation take `(createdAt/plantedAt, now)` and derive
-  the answer fresh every time, so a server restart can't desync them. Don't
-  introduce a stored phase/stage field that could drift from this
-  derivation.
+- **Atomic placement races are resolved by the database, not application
+  logic re-checking state as a separate step.** Building placement
+  (`UNIQUE (x, y)` in `src/server/db.ts`) relies on SQLite's own constraint
+  enforcement — a losing placement is treated exactly like any other
+  occupied-cell rejection. Don't replace this with a read-then-write pair
+  that isn't backed by the same guarantee.
+- **Day/night is a pure function of elapsed wall-clock time, never a
+  ticked or persisted "current phase."** `computeTimeOfDay` takes
+  `(worldCreatedAt, now)` and derives the answer fresh every time, so a
+  server restart can't desync it. Don't introduce a stored phase field
+  that could drift from this derivation. There is no farming or crop
+  growth in the current design — that mechanic was removed; don't
+  reintroduce it without a README/ADR decision first.
+- **Enemies are in-memory-only, transient simulation state — never
+  persisted, not even the boss.** A server restart regenerates the full
+  roster from the deterministic map seed, resetting any in-progress kill
+  count; this is a known, accepted limitation (see `PROCESS.md`), not a
+  gap to quietly patch with new persistence.
 - **Log identity and gameplay outcomes that matter after the fact, not
   every internal step.** `log()` in `src/server/log.ts` is for session
   issuance/rejection, join/reconnect/disconnect/eviction, and
-  identity-attributed gameplay events (combat, boss defeat, beacon
-  deposit/activation) — enough to tell two players apart in a live session
-  afterward, not a line per tick or per movement input.
+  identity-attributed gameplay events (combat attack, game won, game reset,
+  player died, resources reset) — enough to tell two players apart in a
+  live session afterward, not a line per tick or per movement input.
 - **Don't add features that aren't part of the current `README.md`.** A
   new mechanic, item, or win condition is a `README.md` (and likely ADR)
   decision first, not a quiet addition to `room.ts`.
