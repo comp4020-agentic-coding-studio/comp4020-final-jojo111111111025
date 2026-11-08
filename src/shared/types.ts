@@ -103,6 +103,18 @@ export interface EnemyState {
   telegraphing: boolean;
   /** Boss only: epoch ms when the current windup/cooldown phase ends. */
   nextActionAt: number;
+  /**
+   * The cell (if any) Room.stepToward has committed to entering as a
+   * detour around an obstacle the direct line to the player can't cross.
+   * Held across ticks — not recomputed every tick — until the enemy's own
+   * cell matches it, because re-deciding "which way to detour" every tick
+   * from scratch lets the direct-line pull toward the player (which is
+   * still blocked, but still gets tried first) undo most of each detour
+   * step before the enemy ever crosses the cell boundary, oscillating
+   * forever a fraction of a tile from where it started. Cleared the instant
+   * the enemy's cell matches it, handing control back to the direct line.
+   */
+  routeCell?: { cx: number; cy: number };
 }
 
 /** A deterministic initial enemy placement, produced from the map/seed by `enemySpawnsFor` (shared/map.ts) so production and tests build the same roster from the same source. */

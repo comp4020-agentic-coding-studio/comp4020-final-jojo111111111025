@@ -153,6 +153,16 @@ export class Room {
   private readonly enemies = new Map<string, EnemyState>();
   /** Deaths accumulated since the last drainDeathEvents() call — net.ts drains and broadcasts these after every tick(). */
   private readonly pendingDeathEvents: PlayerDeathEvent[] = [];
+  /**
+   * Per-tick cache of distanceFieldTo's BFS result, keyed by the target
+   * cell. Multiple enemies converging on the same player (the common case)
+   * would otherwise each re-run an identical map-wide BFS every tick they're
+   * both blocked on their direct line — this makes it one BFS per distinct
+   * target cell per tick instead of one per blocked enemy. Cleared at the
+   * start of every tick() so a player who's moved gets a fresh field, never
+   * served a stale one from an earlier tick.
+   */
+  private readonly distanceFieldCache = new Map<string, Int32Array>();
 
   constructor(
     map: WorldMap,
@@ -314,6 +324,7 @@ export class Room {
     for (const player of this.players.values()) {
       this.movePlayer(player, dtSeconds);
     }
+    this.distanceFieldCache.clear();
     for (const enemy of this.enemies.values()) {
       this.tickEnemy(enemy, dtSeconds);
     }
@@ -419,16 +430,198 @@ export class Room {
     const dx = target.x - enemy.x;
     const dy = target.y - enemy.y;
     const len = Math.hypot(dx, dy) || 1;
-    const moveX = dx / len;
-    const moveY = dy / len;
-
     const dist = speed * dtSeconds;
-    const targetX = enemy.x + moveX * dist;
-    const targetY = enemy.y + moveY * dist;
-    if (!this.isEnemyBlocked(targetX, enemy.y)) enemy.x = targetX;
-    if (!this.isEnemyBlocked(enemy.x, targetY)) enemy.y = targetY;
+
+    this.stepToward(enemy, dx / len, dy / len, dist, target.x, target.y);
 
     return { target, dist: len };
+  }
+
+  /**
+   * Moves `enemy` one tick toward (targetX, targetY), `dist` tiles at
+   * `speed * dtSeconds`. When *both* axes of the direct-line heading
+   * (moveX, moveY) are fully open, just takes that step — cheap, and
+   * smoothly diagonal in open terrain, the overwhelming majority of ticks.
+   *
+   * The instant *either* axis is blocked, this defers entirely to
+   * distanceFieldTo's BFS distance field rather than taking the open axis's
+   * partial step — unconditionally, not just when the field and the direct
+   * line clearly disagree. A softer rule tried first — compare the open
+   * axis's direction against the field's recommended cardinal via a dot
+   * product, and only override when they disagree outright (dot <= 0) —
+   * has a failure mode neither "both axes blocked" nor "clear disagreement"
+   * catches: a direct line that's *almost* axis-aligned with the blocked
+   * axis (e.g. heading 89.9° west with a sliver of north in it, while west
+   * is blocked) still reads as "roughly agreeing" with the field's actual
+   * recommendation (due north) by dot-product sign, so the direct line
+   * keeps getting trusted — but its contribution along the one open axis
+   * shrinks every tick in proportion to the remaining distance on that axis
+   * (classic Zeno's-paradox decay), so the enemy asymptotically creeps
+   * toward — but mathematically never reaches — the next cell boundary.
+   * Confirmed by pinning a boss just west of a tree at a near-exact
+   * east-west alignment with its target and watching it approach the
+   * boundary for 1000+ simulated seconds without ever crossing it. Since
+   * there's no scalar threshold on "how aligned is aligned enough" that
+   * can't eventually be defeated by *some* angle arbitrarily close to the
+   * blocked axis, the only robust rule is binary: fully open on both axes,
+   * or hand off to the field entirely.
+   *
+   * Once handed off, this finds the cardinally-adjacent cell with the
+   * smallest distance-to-target (if any beats the enemy's own cell) and
+   * commits to it as `enemy.routeCell`, walking only that cell's exact
+   * cardinal direction (followRoute) until the enemy's own cell matches it
+   * — never re-deriving the decision from scratch every tick. Committing
+   * matters for the same reason a softer per-tick re-check would: letting
+   * the (still at least partly blocked) direct line fight the detour every
+   * tick is what produced the lake-shoreline oscillation an even earlier
+   * version of this method hit before routeCell existed at all.
+   *
+   * Candidates are deliberately CARDINAL_NEIGHBOURS, the same 4 directions
+   * the BFS field expands through, never a diagonal: a diagonal neighbour
+   * the field ranks as closer isn't necessarily reachable in one step (the
+   * cell on the diagonal between the enemy and that neighbour might itself
+   * be solid), and the field's own distances only ever account for cardinal
+   * moves — restricting candidates to the same 4 cardinals the field was
+   * built from keeps "the field says it's closer" and "actually reachable
+   * in one step" in sync.
+   */
+  private stepToward(enemy: EnemyState, moveX: number, moveY: number, dist: number, targetX: number, targetY: number): void {
+    if (enemy.routeCell) {
+      if (Math.floor(enemy.x) === enemy.routeCell.cx && Math.floor(enemy.y) === enemy.routeCell.cy) {
+        enemy.routeCell = undefined; // arrived — hand control back to the direct line below
+      } else {
+        this.followRoute(enemy, dist);
+        return;
+      }
+    }
+
+    const stepX = moveX * dist;
+    const stepY = moveY * dist;
+    const xOpen = stepX === 0 || !this.isEnemyBlocked(enemy.x + stepX, enemy.y);
+    const yOpen = stepY === 0 || !this.isEnemyBlocked(enemy.x, enemy.y + stepY);
+    if (xOpen && yOpen) {
+      this.tryAxisMove(enemy, stepX, stepY);
+      return;
+    }
+
+    const field = this.distanceFieldTo(targetX, targetY);
+    if (field) {
+      const fromCx = Math.floor(enemy.x);
+      const fromCy = Math.floor(enemy.y);
+      const fromDist = this.fieldAt(field, fromCx, fromCy);
+      if (fromDist > 0) {
+        // fromDist > 0 excludes both "already in the target's cell" (0 —
+        // fall through to the partial direct-line move below) and "not on
+        // the walkable field at all" (-1 — shouldn't happen, but never
+        // route off a bad read).
+        let best: readonly [number, number] | undefined;
+        let bestDist = fromDist;
+        for (const [cx, cy] of CARDINAL_NEIGHBOURS) {
+          const neighbourDist = this.fieldAt(field, fromCx + cx, fromCy + cy);
+          if (neighbourDist >= 0 && neighbourDist < bestDist) {
+            bestDist = neighbourDist;
+            best = [cx, cy];
+          }
+        }
+        if (best) {
+          enemy.routeCell = { cx: fromCx + best[0], cy: fromCy + best[1] };
+          this.followRoute(enemy, dist);
+          return;
+        }
+      }
+    }
+
+    // No field, or no improving neighbour (e.g. already in the target's
+    // cell, or genuinely walled in) — the partial direct-line move is the
+    // best available, same as the open-terrain case above.
+    this.tryAxisMove(enemy, stepX, stepY);
+  }
+
+  /**
+   * Advances `enemy` one tick toward its committed `routeCell`. Each
+   * candidate from stepToward's CARDINAL_NEIGHBOURS search differs from the
+   * enemy's current cell along exactly one axis, so moving `dist` along
+   * only that axis (never both at once, unlike the direct-line case) is
+   * guaranteed not to introduce the diagonal-clipping risk stepToward's
+   * comment describes, and guarantees the enemy's position on that axis
+   * moves monotonically toward the boundary every tick until it crosses it.
+   */
+  private followRoute(enemy: EnemyState, dist: number): void {
+    const route = enemy.routeCell!;
+    const stepX = route.cx > Math.floor(enemy.x) ? dist : route.cx < Math.floor(enemy.x) ? -dist : 0;
+    const stepY = route.cy > Math.floor(enemy.y) ? dist : route.cy < Math.floor(enemy.y) ? -dist : 0;
+    this.tryAxisMove(enemy, stepX, stepY);
+  }
+
+  /** Applies up to (stepX, stepY) to `enemy` per-axis (the same "slide along a wall" split `movePlayer` uses), skipping either axis that's a no-op. Returns true if either axis actually moved. */
+  private tryAxisMove(enemy: EnemyState, stepX: number, stepY: number): boolean {
+    let moved = false;
+    if (stepX !== 0) {
+      const targetX = enemy.x + stepX;
+      if (!this.isEnemyBlocked(targetX, enemy.y)) {
+        enemy.x = targetX;
+        moved = true;
+      }
+    }
+    if (stepY !== 0) {
+      const targetY = enemy.y + stepY;
+      if (!this.isEnemyBlocked(enemy.x, targetY)) {
+        enemy.y = targetY;
+        moved = true;
+      }
+    }
+    return moved;
+  }
+
+  /** Reads `field`'s BFS distance for cell (cx, cy), or -1 if out of bounds or never reached (solid, or cut off from the target by solid terrain). */
+  private fieldAt(field: Int32Array, cx: number, cy: number): number {
+    if (cx < 0 || cy < 0 || cx >= this.map.width || cy >= this.map.height) return -1;
+    return field[cy * this.map.width + cx]!;
+  }
+
+  /**
+   * BFS distance field (in cells) from every walkable cell to the cell
+   * containing (targetX, targetY), cached per tick per target cell (see
+   * distanceFieldCache) since every enemy converging on the same player
+   * shares the same field. Returns undefined if the target's own cell is
+   * solid (unreachable from anywhere, so there's nothing to route toward —
+   * shouldn't happen for a living player's actual position, but this is the
+   * one caller-facing way that could surface if it ever did).
+   */
+  private distanceFieldTo(targetX: number, targetY: number): Int32Array | undefined {
+    const targetCx = Math.floor(targetX);
+    const targetCy = Math.floor(targetY);
+    if (this.isEnemyBlocked(targetX, targetY)) return undefined;
+
+    const key = cellKey(targetCx, targetCy);
+    const cached = this.distanceFieldCache.get(key);
+    if (cached) return cached;
+
+    const { width, height } = this.map;
+    const field = new Int32Array(width * height).fill(-1);
+    const startIdx = targetCy * width + targetCx;
+    field[startIdx] = 0;
+    const queue: number[] = [startIdx];
+    let head = 0;
+    while (head < queue.length) {
+      const idx = queue[head++]!;
+      const cx = idx % width;
+      const cy = Math.floor(idx / width);
+      const d = field[idx]!;
+      for (const [dx, dy] of CARDINAL_NEIGHBOURS) {
+        const ncx = cx + dx;
+        const ncy = cy + dy;
+        if (ncx < 0 || ncy < 0 || ncx >= width || ncy >= height) continue;
+        if (this.isCellBlocked(ncx, ncy)) continue;
+        const nidx = ncy * width + ncx;
+        if (field[nidx]! !== -1) continue;
+        field[nidx] = d + 1;
+        queue.push(nidx);
+      }
+    }
+
+    this.distanceFieldCache.set(key, field);
+    return field;
   }
 
   /**
@@ -979,6 +1172,7 @@ export class Room {
       enemy.lastContactAt = -Infinity;
       enemy.telegraphing = false;
       enemy.nextActionAt = -Infinity;
+      enemy.routeCell = undefined;
     }
   }
 
@@ -1015,3 +1209,20 @@ function cellKey(x: number, y: number): string {
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
+
+/**
+ * The 4 cardinal (non-diagonal) cell offsets both distanceFieldTo's BFS
+ * expands through and stepToward's fallback ranks as candidate next steps.
+ * Diagonal adjacency is deliberately excluded from both: the field's
+ * distances would otherwise claim a diagonal shortcut past a solid corner
+ * that tryAxisMove's per-axis movement check can't actually take in one
+ * step (see stepToward's comment) — restricting both the field and its
+ * candidates to the same 4 directions keeps "the field says it's closer"
+ * and "tryAxisMove can actually get there" in sync.
+ */
+const CARDINAL_NEIGHBOURS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];

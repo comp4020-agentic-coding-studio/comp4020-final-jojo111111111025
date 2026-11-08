@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { generateWorldMap, enemySpawnsFor } from "../src/shared/map.js";
 import { Room } from "../src/server/room.js";
 import {
   ATTACK_COOLDOWN_MS,
@@ -6,7 +7,9 @@ import {
   BOSS_SPEED_TILES_PER_SEC,
   BOSS_WINDUP_MS,
   DAY_DURATION_MS,
+  DEFAULT_WORLD_SEED,
   GUARDIAN_SPEED_TILES_PER_SEC,
+  MAX_HEALTH,
   SWORD_BONUS_DAMAGE,
   TOOL_DURABILITY_USES,
   WANDERER_NIGHT_SPEED_MULTIPLIER,
@@ -396,6 +399,63 @@ describe("boss movement", () => {
     const midWindup = room.getEnemies()[0]!;
     expect(midWindup.x).toBeCloseTo(plantedX, 5);
     expect(midWindup.y).toBeCloseTo(plantedY, 5);
+  });
+});
+
+describe("enemy chase actually reaches the player on real generated terrain", () => {
+  // Regression test: a greedy "slide along whichever axis is still open"
+  // chase can slide forever along a shoreline without ever closing the
+  // distance — e.g. the production/dev seed's guardian at campsite+[-18,-18]
+  // used to get permanently wedged near (44, 45) by a lake, and separately
+  // (once that was first patched) could slide indefinitely east along a
+  // different lake's shore without ever turning to cross it, confirmed by
+  // running 500+ simulated seconds with no progress. A fixed small-grid
+  // test map can't reproduce this — it only ever showed up on the real
+  // seed's actual terrain, so this runs every enemy spawn from the real
+  // generateWorldMap/enemySpawnsFor on DEFAULT_WORLD_SEED (the one actually
+  // deployed) end to end through real Room.tick() calls and asserts each
+  // one actually arrives, not just that it moves at the right speed.
+  it(`every enemy from enemySpawnsFor(generateWorldMap(DEFAULT_WORLD_SEED)) reaches the player within a generous time budget`, () => {
+    const map = generateWorldMap(DEFAULT_WORLD_SEED);
+    const spawns = enemySpawnsFor(map);
+    const room = new Room(map, {}, [], new Map(), Date.now, Date.now(), spawns);
+    room.addPlayer("p1", "Alice");
+
+    // Wanderers alone respect the campfire's safe radius (see tickEnemy),
+    // and the player spawns inside it — walk away first so every enemy
+    // kind is actually under test, not just the two that ignore safety.
+    for (let i = 0; i < 200; i++) {
+      room.setInput("p1", 1, 1);
+      room.tick(0.05);
+    }
+    room.setInput("p1", 0, 0);
+
+    const enemyIds = room.getEnemies().map((e) => e.id);
+    const reachedTickOf = new Map<string, number>();
+    const maxTicks = 12000; // 600 simulated seconds
+    const arrivalRadius = 3; // generous — this asserts "closed the distance," not "landed a hit"
+
+    for (let tick = 0; tick < maxTicks && reachedTickOf.size < enemyIds.length; tick++) {
+      const player = room.getPlayer("p1")!;
+      if (player.health < MAX_HEALTH) player.health = MAX_HEALTH; // stay alive so every enemy keeps a target to chase
+      room.tick(0.05);
+
+      for (const id of enemyIds) {
+        if (reachedTickOf.has(id)) continue;
+        const enemy = room.getEnemy(id);
+        if (!enemy || !enemy.alive) continue;
+        const dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+        if (dist < arrivalRadius) reachedTickOf.set(id, tick);
+      }
+    }
+
+    const unreached = room.getEnemies().filter((e) => !reachedTickOf.has(e.id));
+    expect(
+      unreached,
+      `enemies that never reached the player within ${maxTicks * 0.05}s: ${unreached
+        .map((e) => `${e.kind} ${e.id} (stuck at ${e.x.toFixed(1)},${e.y.toFixed(1)})`)
+        .join(", ")}`,
+    ).toHaveLength(0);
   });
 });
 
