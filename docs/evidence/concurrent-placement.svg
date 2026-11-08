@@ -1,0 +1,69 @@
+<svg viewBox="0 0 900 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two players place a building on the same cell at once; the in-memory Room approves both requests in the same tick, so SQLite's UNIQUE(x,y) constraint on the second INSERT is what actually decides the winner, and the loser is rolled back with no disk write and no materials consumed.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="arrowWin" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2f9e44"/>
+    </marker>
+    <marker id="arrowLose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e03131"/>
+    </marker>
+  </defs>
+
+  <!-- Column headers -->
+  <text x="170" y="28" font-size="13" font-weight="600" text-anchor="middle">Player A</text>
+  <text x="730" y="28" font-size="13" font-weight="600" text-anchor="middle">Player B</text>
+
+  <!-- Player boxes -->
+  <rect x="110" y="42" width="120" height="36" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="170" y="64" font-size="12" text-anchor="middle">build("wall", 2,2)</text>
+
+  <rect x="670" y="42" width="120" height="36" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="730" y="64" font-size="12" text-anchor="middle">build("wall", 2,2)</text>
+
+  <!-- Arrows down to Room -->
+  <line x1="190" y1="82" x2="330" y2="122" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="690" y1="82" x2="570" y2="122" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="200" y="110" font-size="10.5">doBuild(p1)</text>
+  <text x="698" y="110" font-size="10.5" text-anchor="end">doBuild(p2)</text>
+
+  <!-- Room.ts in-memory box -->
+  <rect x="320" y="124" width="260" height="92" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="450" y="144" font-size="12.5" font-weight="600" text-anchor="middle">Room (in memory, one tick)</text>
+  <text x="450" y="164" font-size="11" text-anchor="middle">range · materials · cell_occupied?</text>
+  <text x="450" y="181" font-size="11" text-anchor="middle">checked against this tick's own</text>
+  <text x="450" y="197" font-size="11" text-anchor="middle">in-memory map — both read "free"</text>
+
+  <!-- Both pass the in-memory check, converge toward db -->
+  <line x1="365" y1="216" x2="410" y2="262" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="535" y1="216" x2="490" y2="262" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="355" y="240" font-size="10.5">approved</text>
+  <text x="545" y="240" font-size="10.5" text-anchor="end">approved</text>
+
+  <!-- SQLite box -->
+  <rect x="350" y="266" width="200" height="72" fill="none" stroke="currentColor" stroke-width="2"/>
+  <text x="450" y="289" font-size="12.5" font-weight="600" text-anchor="middle">SQLite</text>
+  <text x="450" y="307" font-size="11" text-anchor="middle">UNIQUE (x, y)</text>
+  <text x="450" y="323" font-size="10.5" text-anchor="middle">on buildings table</text>
+
+  <!-- INSERT A - wins -->
+  <path d="M350,278 C 250,278 190,300 170,340" fill="none" stroke="#2f9e44" stroke-width="2" marker-end="url(#arrowWin)"/>
+  <text x="198" y="265" font-size="10.5" fill="#2f9e44">INSERT (2,2) — commits first</text>
+
+  <!-- INSERT B - loses -->
+  <path d="M550,278 C 650,278 710,300 730,340" fill="none" stroke="#e03131" stroke-width="2" marker-end="url(#arrowLose)"/>
+  <text x="702" y="265" font-size="10.5" fill="#e03131" text-anchor="end">INSERT (2,2) — rejected</text>
+
+  <!-- Result boxes -->
+  <rect x="90" y="344" width="160" height="50" fill="none" stroke="#2f9e44" stroke-width="1.5"/>
+  <text x="170" y="364" font-size="12" font-weight="600" text-anchor="middle" fill="#2f9e44">ok: true</text>
+  <text x="170" y="381" font-size="10.5" text-anchor="middle">wall placed, materials spent</text>
+
+  <rect x="650" y="344" width="160" height="50" fill="none" stroke="#e03131" stroke-width="1.5"/>
+  <text x="730" y="364" font-size="12" font-weight="600" text-anchor="middle" fill="#e03131">cell_occupied</text>
+  <text x="730" y="381" font-size="10.5" text-anchor="middle">materials untouched</text>
+
+  <!-- Note about app-level alternative -->
+  <text x="450" y="420" font-size="10.5" text-anchor="middle" opacity="0.75">No application-level "is this cell taken?" re-check — the constraint is the only lock, so the race can't be lost twice.</text>
+</svg>
