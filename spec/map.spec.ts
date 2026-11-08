@@ -62,3 +62,25 @@ describe("generateWorldMap", () => {
     expect(terrains).toEqual(new Set(["grass", "forest", "water", "rock"]));
   });
 });
+
+describe("enemySpawnsFor", () => {
+  it("never places a spawn on solid terrain, on every seed", () => {
+    // Regression test: a spawn offset can land on water (or rock) on some
+    // seeds — e.g. "last-shelter-dev-seed"'s guardian at campsite+[-18,-18]
+    // used to land in the middle of a lake. An enemy's tick loop refuses to
+    // step onto solid terrain, so a spawn there leaves it permanently stuck
+    // and unreachable by anything but a ranged attack that doesn't exist.
+    for (const seed of ["seed-a", "seed-b", "seed-c", "last-shelter-dev-seed"]) {
+      const map = generateWorldMap(seed);
+      const spawns = enemySpawnsFor(map);
+      for (const spawn of spawns) {
+        const tile = map.tiles[spawn.y * map.width + spawn.x];
+        expect(tile, `seed "${seed}" ${spawn.kind} spawn (${spawn.x},${spawn.y}) out of bounds`).toBeDefined();
+        expect(
+          SOLID_TERRAIN.has(tile!.terrain),
+          `seed "${seed}" ${spawn.kind} spawn (${spawn.x},${spawn.y}) landed on solid terrain "${tile!.terrain}"`,
+        ).toBe(false);
+      }
+    }
+  });
+});

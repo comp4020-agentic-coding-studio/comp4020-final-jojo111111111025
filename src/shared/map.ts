@@ -1,5 +1,6 @@
 import { MAP_HEIGHT, MAP_WIDTH } from "./constants.js";
 import type { EnemySpawn, MapObject, MapTile, ResourceKind, TerrainKind, WorldMap } from "./types.js";
+import { SOLID_TERRAIN } from "./types.js";
 
 /** Deterministic string -> 32-bit seed, so the same seed string always yields the same map. */
 function hashSeed(seed: string): number {
@@ -192,7 +193,7 @@ export function enemySpawnsFor(map: WorldMap): EnemySpawn[] {
   for (const [dx, dy] of wandererOffsets) {
     const x = clampInt(map.campsite.x + dx, 1, map.width - 2);
     const y = clampInt(map.campsite.y + dy, 1, map.height - 2);
-    spawns.push({ kind: "wanderer", x, y });
+    spawns.push({ kind: "wanderer", ...nearestWalkable(map, x, y) });
   }
 
   const guardianOffsets: Array<[number, number]> = [
@@ -202,16 +203,48 @@ export function enemySpawnsFor(map: WorldMap): EnemySpawn[] {
   for (const [dx, dy] of guardianOffsets) {
     const x = clampInt(map.campsite.x + dx, 1, map.width - 2);
     const y = clampInt(map.campsite.y + dy, 1, map.height - 2);
-    spawns.push({ kind: "guardian", x, y });
+    spawns.push({ kind: "guardian", ...nearestWalkable(map, x, y) });
   }
 
   const bossX = clampInt(map.campsite.x + 28, 1, map.width - 2);
   const bossY = clampInt(map.campsite.y + 28, 1, map.height - 2);
-  spawns.push({ kind: "boss", x: bossX, y: bossY });
+  spawns.push({ kind: "boss", ...nearestWalkable(map, bossX, bossY) });
 
   return spawns;
 }
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/**
+ * An enemy's tick loop (room.ts's tickEnemy) refuses to step onto solid
+ * terrain, so a spawn placed directly on water or rock leaves that enemy
+ * permanently stuck there — reachable by nothing but ranged attacks that
+ * don't exist. BFS outward from the requested cell to the nearest walkable
+ * one (expanding ring by ring) rather than ever handing out a spawn point
+ * on solid terrain.
+ */
+function nearestWalkable(map: WorldMap, x: number, y: number): { x: number; y: number } {
+  const isWalkable = (cx: number, cy: number): boolean => {
+    if (!inBounds(cx, cy, map.width, map.height)) return false;
+    const tile = map.tiles[cy * map.width + cx];
+    return !!tile && !SOLID_TERRAIN.has(tile.terrain);
+  };
+
+  if (isWalkable(x, y)) return { x, y };
+
+  for (let radius = 1; radius < Math.max(map.width, map.height); radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue; // only the new ring's edge
+        const cx = x + dx;
+        const cy = y + dy;
+        if (isWalkable(cx, cy)) return { x: cx, y: cy };
+      }
+    }
+  }
+
+  // Every tile is solid (never true for a generated map, but keeps this total).
+  return { x, y };
 }

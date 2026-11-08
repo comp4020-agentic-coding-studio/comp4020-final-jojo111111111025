@@ -673,8 +673,14 @@ function performToggleChest(): void {
 /** The H action: use a bandage if alive, holding at least one, and not already at full health (healing there would just waste the bandage). Shared by the keyboard handler and the touch bandage button. */
 function performUseBandage(): void {
   if (!localAlive) return;
-  if (myInventory.bandage <= 0) return;
-  if (localHealth >= MAX_HEALTH) return;
+  if (myInventory.bandage <= 0) {
+    showActionFeedback("No bandages — craft one from 3 berries.", true);
+    return;
+  }
+  if (localHealth >= MAX_HEALTH) {
+    showActionFeedback("Already at full health.", true);
+    return;
+  }
   const requestId = crypto.randomUUID();
   pendingBandageRequests.add(requestId);
   client.useBandage(requestId);
