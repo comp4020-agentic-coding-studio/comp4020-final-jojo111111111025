@@ -800,6 +800,33 @@ export class Room {
     return [...this.buildingsById.values()];
   }
 
+  /** True if at least one player currently holds an open connection (a reconnect-grace-window slot with `connected: false` doesn't count). */
+  hasConnectedPlayers(): boolean {
+    for (const player of this.players.values()) {
+      if (player.connected) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Restocks every gatherable object on the map back to its maxRemaining —
+   * called once the last connected player disconnects, so a map nobody is
+   * actively playing on doesn't stay picked over for whoever joins next.
+   * Persists each node's new remaining the same way a gather does, and
+   * returns the objects that actually changed so the caller can broadcast
+   * the restock to any clients still displaying the (now stale) map.
+   */
+  resetAllResources(): MapObject[] {
+    const changed: MapObject[] = [];
+    for (const object of this.objectsById.values()) {
+      if (!object.resource || object.resource.remaining === object.resource.maxRemaining) continue;
+      object.resource.remaining = object.resource.maxRemaining;
+      this.persistence.nodeRemaining?.(object.id, object.resource.remaining);
+      changed.push(object);
+    }
+    return changed;
+  }
+
   getBuilding(id: string): Building | undefined {
     return this.buildingsById.get(id);
   }

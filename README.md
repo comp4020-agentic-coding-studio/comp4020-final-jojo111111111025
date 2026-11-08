@@ -160,3 +160,9 @@ buildings and chest contents, and each identity's inventory and health.
 A building removed by its owner's death is deleted from storage the same
 instant it's removed in memory, not just hidden client-side — a restart
 right after a death never brings it back.
+
+The instant the last connected player disconnects, every gatherable node
+on the map restocks back to its max yield — a shared map nobody's actively
+playing on doesn't stay picked over for whoever joins next. Players who
+are mid-reconnect (still holding their room slot through the grace window)
+don't count as connected for this check; only an open socket does.

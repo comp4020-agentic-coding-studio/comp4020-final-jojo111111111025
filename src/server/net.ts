@@ -65,6 +65,8 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
   /** Pending eviction timers for ids that have disconnected but are still within their reconnect grace window. */
   const pendingEviction = new Map<string, NodeJS.Timeout>();
   let nextGeneration = 1;
+  /** Set by stop() — guards against a terminated socket's close handler running persistence (e.g. resetAllResources) after the DB handle has been (or is about to be) closed during teardown. */
+  let stopped = false;
 
   const interactLimiter = new RateLimiter(10, 1000);
   const inputLimiter = new RateLimiter(40, 1000);
@@ -420,6 +422,7 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
     socket.on("close", () => {
       connections.delete(socket);
       if (!conn.joined) return;
+      if (stopped) return; // server is tearing down — no persistence after this point
 
       // A stale (already-superseded) socket's close must not clobber the
       // newer connection's state — only the current generation's close
@@ -429,6 +432,18 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
       log("player_disconnected", { player_id: conn.id });
       room.setConnected(conn.id, false);
       broadcastRoster();
+
+      // Nobody's actively playing the map right now (reconnect-grace slots
+      // held by other disconnected players don't count) — restock every
+      // gatherable node rather than leaving it picked over for whoever
+      // joins next. No socket is open to broadcast the restock to, so this
+      // only needs to update the in-memory map + persistence.
+      if (!room.hasConnectedPlayers()) {
+        const restocked = room.resetAllResources();
+        if (restocked.length > 0) {
+          log("resources_reset", { reason: "no_active_players", object_count: restocked.length });
+        }
+      }
 
       const timer = setTimeout(() => {
         pendingEviction.delete(conn.id);
@@ -469,6 +484,7 @@ export function attachWebSocketServer(wss: WebSocketServer, room: Room, options:
 
   return {
     stop() {
+      stopped = true;
       clearInterval(tickTimer);
       clearInterval(snapshotTimer);
       for (const timer of pendingEviction.values()) clearTimeout(timer);
