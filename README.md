@@ -25,9 +25,12 @@ server issues on first load.
   zero, your inventory is emptied and every building you placed (walls,
   floors, campfires, workbenches, chests — chest contents included) is
   removed from the shared map for good. Respawning at the campsite restores
-  full health, nothing else; there's no grace period and no way to recover
-  what was lost. This applies however you died — a wanderer's bite, the
-  boss's slam, anything that brings your health to 0.
+  full health, and also resets every enemy on the map — including any
+  you'd already killed — back to full health at its spawn point: a death
+  sends the whole shared fight back to the start, not just you. There's no
+  grace period and no way to recover what was lost. This applies however
+  you died — a wanderer's bite, the boss's slam, anything that brings your
+  health to 0.
 
 - WASD/arrow keys move; `E` gathers from a nearby resource node; `Space`
   attacks the nearest adjacent enemy; `H` uses a bandage from your

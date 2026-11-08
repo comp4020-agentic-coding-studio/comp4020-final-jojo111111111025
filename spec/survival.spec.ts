@@ -131,6 +131,43 @@ describe("Room player health and respawn", () => {
     room.respawn("p1");
     expect(calls).toEqual([{ playerId: "p1", health: MAX_HEALTH }]);
   });
+
+  it("respawn revives every enemy on the map, including ones already killed, back to full health at their spawn point", () => {
+    const clock = makeClock();
+    const spawns: EnemySpawn[] = [
+      { kind: "wanderer", x: 1, y: 1 },
+      { kind: "guardian", x: 5, y: 5 },
+    ];
+    const room = new Room(makeTestMap(), {}, [], new Map(), clock.now, clock.now(), spawns);
+    room.addPlayer("p1", "Alice", undefined, 0); // dead on arrival
+
+    const [wanderer, guardian] = room.getEnemies();
+    // Force the wanderer dead and displace the guardian, standing in for
+    // "a fight already in progress" before the respawn that should undo both.
+    const wandererState = room.getEnemy(wanderer!.id)!;
+    wandererState.alive = false;
+    wandererState.health = 0;
+    const guardianState = room.getEnemy(guardian!.id)!;
+    guardianState.x = guardianState.spawnX + 3;
+    guardianState.y = guardianState.spawnY + 3;
+    guardianState.health = 1;
+
+    expect(room.allEnemiesDefeated()).toBe(false); // guardian is still alive, just damaged/displaced
+
+    room.respawn("p1");
+
+    const revivedWanderer = room.getEnemy(wanderer!.id)!;
+    expect(revivedWanderer.alive).toBe(true);
+    expect(revivedWanderer.health).toBe(revivedWanderer.maxHealth);
+    expect(revivedWanderer.x).toBe(revivedWanderer.spawnX);
+    expect(revivedWanderer.y).toBe(revivedWanderer.spawnY);
+
+    const revivedGuardian = room.getEnemy(guardian!.id)!;
+    expect(revivedGuardian.alive).toBe(true);
+    expect(revivedGuardian.health).toBe(revivedGuardian.maxHealth);
+    expect(revivedGuardian.x).toBe(revivedGuardian.spawnX);
+    expect(revivedGuardian.y).toBe(revivedGuardian.spawnY);
+  });
 });
 
 describe("death wipes inventory and buildings", () => {

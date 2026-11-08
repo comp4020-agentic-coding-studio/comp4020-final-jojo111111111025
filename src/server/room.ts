@@ -847,8 +847,11 @@ export class Room {
   /**
    * Validates and applies a respawn: only a dead player may respawn.
    * Inventory and buildings were already cleared at the moment of death
-   * (see wipePlayerOnDeath) — respawn itself only restores health and
-   * position.
+   * (see wipePlayerOnDeath) — respawn itself restores health and position,
+   * and also resets every enemy on the map (see resetAllEnemies) back to
+   * full health at its spawn point, dead ones included — a respawn is a
+   * fresh start at the fight, not a quiet continuation of wherever it left
+   * off.
    */
   respawn(playerId: string): ActionResult {
     const player = this.players.get(playerId);
@@ -863,8 +866,28 @@ export class Room {
     player.inputDx = 0;
     player.inputDy = 0;
     this.persistHealth(player);
+    this.resetAllEnemies();
 
     return { ok: true, health: player.health };
+  }
+
+  /**
+   * Resets every enemy on the map — alive or dead — back to full health at
+   * its original spawn point. Called on every respawn so dying never leaves
+   * the fight partway won: the shared win condition (allEnemiesDefeated)
+   * only means something if a respawn can't quietly dodge it by leaving
+   * already-dead enemies dead while reviving everything else.
+   */
+  private resetAllEnemies(): void {
+    for (const enemy of this.enemies.values()) {
+      enemy.health = enemy.maxHealth;
+      enemy.alive = true;
+      enemy.x = enemy.spawnX;
+      enemy.y = enemy.spawnY;
+      enemy.lastContactAt = -Infinity;
+      enemy.telegraphing = false;
+      enemy.nextActionAt = -Infinity;
+    }
   }
 
   /**
