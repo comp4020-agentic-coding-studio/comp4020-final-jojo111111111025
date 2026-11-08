@@ -1,83 +1,82 @@
-# Your harness
+# Last Shelter — Agent Harness
 
-Rules for working on Last Shelter, derived from `README.md` and the ADRs in
-`docs/adr/`. Rewrite these as the app's own invariants change — don't let
-this drift from what the code actually guarantees.
+Rules for working on Last Shelter. These are the project's working invariants, derived from [`README.md`](README.md), [`PROCESS.md`](PROCESS.md), [`docs/adr/`](docs/adr/), and [`spec/`](spec/).
 
-## Course-wide requirements (unchanged across deliverables)
+Keep this file concise and actionable. Detailed explanations belong in the linked documents. Update these rules when the implementation deliberately changes; never claim guarantees that the code does not provide.
 
-- **`/readme/` always reflects the current `README.md`, verbatim, in full.**
-  `renderReadme()` in `src/server/index.ts` reads `README.md` fresh on every
-  request — no cached or separate copy to keep in sync. If `README.md`
-  changes, `/readme/` changes with it.
-- **No accounts, no sign-up, ever — only the anonymous signed identity
-  cookie.** If a future phase wants to tell players apart more durably than
-  a cookie, that's a decision for an ADR first, not a quiet addition to the
-  server. See `docs/adr/001-anonymous-identity.md`.
-- **The identity cookie's signing secret never leaves the server.** Not
-  logged, not sent to a client, not embedded in anything the client
-  renders. `src/server/log.ts`'s `log()` calls carry `player_id`, never a
-  cookie value, signature, or `SESSION_SECRET`.
-- **Keep `spec/invariants.test.ts` green.** It checks the two things the
-  course relies on against the running app: `/` answers `200`, and
-  `/readme/` publishes every one of `README.md`'s headings, in order. Don't
-  delete or weaken it to make the suite pass — fix the app instead.
+## 1. Course requirements
 
-## Last Shelter's own invariants
+- **README publication:** `/readme/` must publish the complete, current `README.md`. `renderReadme()` in `src/server/index.ts` reads it on each request. Do not maintain a separate copy.
+- **Deployment:** Preserve the Fly.io deployment configuration, persistent volume, and production startup path.
+- **Multi-user:** Separate browser sessions must share the same authoritative world and distinguish players by anonymous identity.
+- **Real-time:** Shared changes must reach other connected sessions within approximately one second, without reloads.
+- **Persistence:** Data promised as persistent must survive sessions, server restarts, and redeployments. Document intentionally transient state.
+- **Responsive:** Keep the application usable at both 1920×1080 and 390×844.
+- **Checks:** Preserve `spec/invariants.test.ts`. Both `pnpm check` and `pnpm check:evidence` must pass. Never weaken checks to hide regressions.
 
-- **Every mutating action is validated server-side against the connection's
-  resolved identity, never a client-claimed one.** `net.ts` resolves
-  `conn.id` once, from the signed cookie, when a WebSocket connects; no
-  client message carries or can override an identity field. `room.ts`'s
-  interact/craft/build/chestTransfer/attack/useBandage/respawn/playAgain
-  methods all take that resolved id as a parameter, not something read back
-  out of the message.
-- **A superseded connection can never mutate state.** A second connection
-  for the same identity bumps `nextGeneration`; `isCurrent()` must gate any
-  handler that mutates room state on behalf of a connection, the same way
-  `room.join`'s own supersede logic and the `socket.on("close")` handler
-  already do. Don't add a new message handler that skips this check.
-- **Atomic placement races are resolved by the database, not application
-  logic re-checking state as a separate step.** Building placement
-  (`UNIQUE (x, y)` in `src/server/db.ts`) relies on SQLite's own constraint
-  enforcement — a losing placement is treated exactly like any other
-  occupied-cell rejection. Don't replace this with a read-then-write pair
-  that isn't backed by the same guarantee.
-- **Day/night is a pure function of elapsed wall-clock time, never a
-  ticked or persisted "current phase."** `computeTimeOfDay` takes
-  `(worldCreatedAt, now)` and derives the answer fresh every time, so a
-  server restart can't desync it. Don't introduce a stored phase field
-  that could drift from this derivation. There is no farming or crop
-  growth in the current design — that mechanic was removed; don't
-  reintroduce it without a README/ADR decision first.
-- **Enemies are in-memory-only, transient simulation state — never
-  persisted, not even the boss.** A server restart regenerates the full
-  roster from the deterministic map seed, resetting any in-progress kill
-  count; this is a known, accepted limitation (see `PROCESS.md`), not a
-  gap to quietly patch with new persistence.
-- **Log identity and gameplay outcomes that matter after the fact, not
-  every internal step.** `log()` in `src/server/log.ts` is for session
-  issuance/rejection, join/reconnect/disconnect/eviction, and
-  identity-attributed gameplay events (combat attack, game won, game reset,
-  player died, resources reset) — enough to tell two players apart in a
-  live session afterward, not a line per tick or per movement input.
-- **Don't add features that aren't part of the current `README.md`.** A
-  new mechanic, item, or win condition is a `README.md` (and likely ADR)
-  decision first, not a quiet addition to `room.ts`.
-- **Death wipes inventory and every building the player owns, in that one
-  server-side place.** `Room.damagePlayer` is the only path to `alive =
-  false`; the instant health reaches 0 it calls `wipePlayerOnDeath`, which
-  empties the inventory and removes (in memory and in SQLite) every building
-  with that player's `ownerId`, then queues a `PlayerDeathEvent`. `net.ts`
-  drains that queue after every `tick()` and broadcasts `player.died` so
-  every client (not just the victim's) drops the removed buildings. A new
-  way for a player to take damage must still go through `damagePlayer` —
-  don't add a second place that can flip `alive` without the same wipe.
-- **Touch and keyboard input must call the same client-side action
-  functions, never duplicate the logic.** `performInteract`/
-  `performAttack`/`performToggleChest`/`performUseBandage` in `main.ts` are
-  each called from both the keyboard handler and a touch button; a new
-  input method or action needs to share that one function, not grow a
-  second implementation that can drift from it. Movement is summed
-  (`touchMove` + `keys`, clamped to `[-1, 1]`), never one input
-  overwriting the other.
+## 2. Identity and multiplayer
+
+- No accounts or sign-up. Use the anonymous signed identity cookie. See [`docs/adr/001-anonymous-identity.md`](docs/adr/001-anonymous-identity.md).
+- Never expose the cookie, signature, or `SESSION_SECRET` to clients or logs. Log `player_id` instead.
+- `net.ts` resolves connection identity from the signed cookie. Never trust a client-supplied player ID.
+- Every mutating WebSocket handler must verify `isCurrent()` so superseded connections cannot mutate state.
+- The server is authoritative for gameplay validation and shared state.
+- Resolve concurrent operations atomically. Building placement relies on SQLite's `UNIQUE (x, y)` constraint; do not replace it with an unsafe read-then-write check.
+
+## 3. Persistence and gameplay
+
+- Keep durable database state separate from intentionally transient in-memory simulation state.
+- Day/night must remain derived from `computeTimeOfDay(worldCreatedAt, now)`, not a separately persisted phase.
+- Enemies, including the boss, are transient and regenerate from the deterministic map seed after restart. Their kill progress does not persist.
+- Farming and crop growth are not part of the current design. Do not reintroduce removed mechanics without an explicit design decision.
+- Every death must go through `Room.damagePlayer()`. At zero health, `wipePlayerOnDeath()` clears the player's inventory and owned buildings from memory and SQLite.
+- Death events must be broadcast to all clients through `player.died`.
+- Enemy resets must not reset unrelated world or surviving-player state, generate duplicate enemies, or corrupt the existing world. Any connected player may request the reset.
+- Collected or depleted resources must remain consistent across clients and reconnects.
+- Validate inventory limits and all gameplay actions on the server.
+
+See [`PROCESS.md`](PROCESS.md) and [`docs/adr/`](docs/adr/) for implementation rationale and accepted trade-offs.
+
+## 4. Real-time communication and feedback
+
+- Broadcast shared gameplay changes to all relevant connected clients.
+- Reconnecting clients must receive authoritative current state, not rely on stale local state.
+- Do not introduce competing sources of truth between client and server.
+- Log significant events: session issuance/rejection, joins, reconnects, disconnects, evictions, combat, wins, resets, deaths, and resource resets.
+- Do not log every tick or movement input. Never log credentials or signing secrets.
+- Important actions must provide understandable feedback, including successful interactions, failures, collection, crafting, combat, death, and victory.
+
+## 5. Interface and controls
+
+- Keep the established pixel-art visual direction coherent across terrain, characters, resources, buildings, and enemies.
+- Make players and important interactive objects recognisable.
+- Essential objectives and controls must be discoverable to first-time players.
+- Preserve clear local-player and other-player visual distinctions.
+- Keyboard and touch controls must call the same action functions. Reuse `performInteract`, `performAttack`, `performToggleChest`, and `performUseBandage` in `main.ts`.
+- Movement must combine `touchMove` and keyboard input, clamped to `[-1, 1]`; never let one input overwrite the other.
+- Mobile controls must work without hover and must not obscure essential gameplay information.
+- Do not sacrifice readability or usability for decoration.
+
+## 6. Scope and development workflow
+
+- Do not add mechanics, items, enemies, recipes, or win conditions outside the current README without an explicit scope decision.
+- Significant architectural changes to identity, persistence, concurrency, or world-state authority require an ADR.
+- Keep `README.md`, `CLAUDE.md`, `spec/`, and the actual implementation consistent.
+- Add tests for new enforceable guarantees. Do not describe untested judgement-based qualities as automated guarantees.
+- Preserve commit history and reflection evidence. Never invent commits, test results, or deployment claims.
+- Prefer focused changes. Do not rewrite unrelated working systems or introduce dependencies without a clear reason.
+- Respect explicit file boundaries in each task. A visual-only task must not silently change gameplay, shared protocols, or server logic.
+- Before reporting completion, run relevant checks, inspect the diff, and state what changed and what remains unverified.
+
+## 7. When a rule must change
+
+When a requested change conflicts with an existing invariant:
+
+1. Identify the affected promise.
+2. Explain the reason and trade-offs.
+3. Update the README and relevant ADR where necessary.
+4. Update this harness and `spec/` to reflect the new contract.
+5. Update `PROCESS.md` if the decision changes the development rationale.
+6. Implement and verify the change.
+
+**The objective is intentional evolution:** every change should preserve or deliberately revise the experience Last Shelter promises.
